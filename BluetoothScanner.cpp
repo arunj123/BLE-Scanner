@@ -93,12 +93,44 @@ void TP357Handler::handle(const std::string& addr, int8_t rssi, uint8_t *data, i
     double humidity = -999.0;
 
     // Parse specific data for TP357 and get the name (again, for verbose output)
-    parse_advertising_data_tp357(data, len, device_name, temperature, humidity, true);
+    TP357Handler::parse_advertising_data_tp357(data, len, device_name, temperature, humidity, true);
 
     std::cout << "\n--- Detected TP357 Device ---" << std::endl;
     std::cout << "Address: " << addr << std::endl;
     std::cout << "RSSI: " << (int)rssi << std::endl;
     // parse_advertising_data_tp357 already prints the detailed decoded fields.
+    std::cout << "-----------------------------" << std::endl;
+}
+
+// --- ITagHandler Implementation ---
+
+ITagHandler::ITagHandler(IGattClientManager* gatt_manager) : gatt_manager_(gatt_manager) {}
+
+bool ITagHandler::canHandle(const std::string& device_name) const {
+    // iTags often advertise with names like "iTag", "Smart Finder", or similar.
+    // You might need to observe your specific iTag's advertised name.
+    // For now, let's assume it might contain "iTag" or "Smart".
+    return device_name.find("iTag") != std::string::npos ||
+           device_name.find("Smart") != std::string::npos;
+}
+
+void ITagHandler::handle(const std::string& addr, int8_t rssi, uint8_t *data, int len) {
+    std::string device_name;
+    // Use the general parser to get the name for printing
+    BluetoothScanner::parse_advertising_data_general(data, len, device_name); // Access via static call
+
+    std::cout << "\n--- Detected iTag Device (Advertisement) ---" << std::endl;
+    std::cout << "Address: " << addr << std::endl;
+    std::cout << "RSSI: " << (int)rssi << std::endl;
+    std::cout << "Device Name: \"" << device_name << "\"" << std::endl;
+    std::cout << "Attempting to request GATT connection for button press detection..." << std::endl;
+    
+    // Request GATT connection via the manager
+    if (gatt_manager_) {
+        gatt_manager_->requestGattConnection(addr, device_name);
+    } else {
+        std::cerr << "Error: GATT Client Manager not set for ITagHandler." << std::endl;
+    }
     std::cout << "-----------------------------" << std::endl;
 }
 
@@ -283,11 +315,12 @@ void BluetoothScanner::startScan() {
 
                     std::string device_name;
                     // General parsing to extract device name for filtering
-                    parse_advertising_data_general(info->data, info->length, device_name);
+                    BluetoothScanner::parse_advertising_data_general(info->data, info->length, device_name);
 
                     bool handled = false;
                     for (const auto& handler : device_handlers_) {
                         if (handler->canHandle(device_name)) {
+                            // Pass RSSI as int8_t directly from info->data[info->length]
                             handler->handle(addr, (int8_t)info->data[info->length], info->data, info->length);
                             handled = true;
                             break; // Handled by this, move to next report
@@ -323,7 +356,7 @@ void BluetoothScanner::stopScan() {
     }
 }
 
-// Private helper function implementation for general advertising data parsing (mainly for name)
+// Public static helper function implementation for general advertising data parsing (mainly for name)
 void BluetoothScanner::parse_advertising_data_general(uint8_t *data, int len, std::string& device_name_out) {
     device_name_out.clear();
     int offset = 0;
@@ -351,4 +384,3 @@ void BluetoothScanner::registerHandler(std::unique_ptr<IDeviceHandler> handler) 
         device_handlers_.push_back(std::move(handler));
     }
 }
-

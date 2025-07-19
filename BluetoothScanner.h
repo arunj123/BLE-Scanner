@@ -48,7 +48,10 @@ typedef struct {
 #endif
 // --- End of conditional definitions ---
 
-// Interface for device-specific handlers
+// Forward declaration for the GATT client manager interface
+class IGattClientManager;
+
+// Interface for device-specific handlers (for advertising data)
 class IDeviceHandler {
 public:
     virtual ~IDeviceHandler() = default;
@@ -72,6 +75,27 @@ private:
                                              double& temperature_out, double& humidity_out, bool verbose_output);
 };
 
+// Concrete handler for iTag devices (advertisement part)
+class ITagHandler : public IDeviceHandler {
+public:
+    // Constructor takes a pointer to the GATT client manager
+    ITagHandler(IGattClientManager* gatt_manager);
+    bool canHandle(const std::string& device_name) const override;
+    void handle(const std::string& addr, int8_t rssi, uint8_t *data, int len) override;
+
+private:
+    IGattClientManager* gatt_manager_; // Pointer to the GATT client manager
+};
+
+// Interface for managing GATT connections
+class IGattClientManager {
+public:
+    virtual ~IGattClientManager() = default;
+    // Requests a GATT connection to the specified address.
+    // This is a placeholder for actual connection logic.
+    virtual void requestGattConnection(const std::string& addr, const std::string& device_name) = 0;
+};
+
 
 class BluetoothScanner {
 public:
@@ -86,20 +110,19 @@ public:
     void startScan();
 
     // Stops the BLE scanning loop and cleans up the HCI device.
-    void
-    stopScan();
+    void stopScan();
 
     // Registers a new device handler. Ownership is transferred to the scanner.
     void registerHandler(std::unique_ptr<IDeviceHandler> handler);
+
+    // Public static helper function to parse advertising data (general purpose, used for name extraction)
+    // Made static and public for use by device handlers.
+    static void parse_advertising_data_general(uint8_t *data, int len, std::string& device_name_out);
 
 private:
     int dd_; // Device descriptor for the HCI device
     std::atomic<bool> keep_running_; // Flag to control the scanning loop
     std::vector<std::unique_ptr<IDeviceHandler>> device_handlers_; // Registered device handlers
-
-    // Private helper function to parse advertising data (general purpose, used for name extraction)
-    void parse_advertising_data_general(uint8_t *data, int len, std::string& device_name_out);
 };
 
 #endif // BLUETOOTH_SCANNER_H
-
