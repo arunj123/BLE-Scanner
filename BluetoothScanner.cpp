@@ -6,6 +6,105 @@
 #include <errno.h> // Required for errno
 #include <sys/select.h> // Required for select()
 
+// --- TP357Handler Implementation ---
+
+bool TP357Handler::canHandle(const std::string& device_name) const {
+    // Check if the device name contains "TP357"
+    return device_name.find("TP357") != std::string::npos;
+}
+
+void TP357Handler::parse_advertising_data_tp357(uint8_t *data, int len, std::string& device_name_out,
+                                                double& temperature_out, double& humidity_out, bool verbose_output) {
+    device_name_out.clear(); // Clear previous name for each new advertisement
+    temperature_out = -999.0; // Initialize with an invalid value
+    humidity_out = -999.0;    // Initialize with an invalid value
+
+    int offset = 0;
+    while (offset < len) {
+        uint8_t field_len = data[offset];
+        if (field_len == 0) break; // End of advertising data
+
+        uint8_t field_type = data[offset + 1];
+        uint8_t *field_data = &data[offset + 2];
+        int field_data_len = field_len - 1;
+
+        if (verbose_output) {
+            // Print all AD types and their raw data for debugging/completeness
+            std::cout << "    AD Type: 0x" << std::hex << (int)field_type << std::dec << " (Len: " << (int)field_len << ") Raw Data: ";
+            for (int i = 0; i < field_data_len; ++i) {
+                printf("%02X ", field_data[i]);
+            }
+            std::cout << std::endl;
+        }
+
+        switch (field_type) {
+            case AD_TYPE_COMPLETE_LOCAL_NAME:
+            case AD_TYPE_SHORT_LOCAL_NAME: {
+                // Extract device name
+                device_name_out.assign((char*)field_data, field_data_len);
+                if (verbose_output) {
+                    std::cout << "      Decoded Device Name: \"" << device_name_out << "\"" << std::endl;
+                }
+                break;
+            }
+            case AD_TYPE_MANUFACTURER_SPECIFIC_DATA: {
+                if (verbose_output) {
+                    std::cout << "      Decoded Manufacturer Specific Data: ";
+                }
+                // Check if enough data for Company ID (2 bytes), Temperature (2 bytes), and Humidity (1 byte)
+                // Based on ESP32 snippet, temperature is at index 1,2 (little-endian) and humidity at index 3.
+                // So, we need at least 4 bytes of manufacturer data (field_data[0] to field_data[3])
+                if (field_data_len >= 4) {
+                    uint16_t company_id = field_data[0] | (field_data[1] << 8); // Little-endian Company ID
+                    if (verbose_output) {
+                        std::cout << "Company ID: 0x" << std::hex << company_id << std::dec << " ";
+                    }
+
+                    // Temperature: 16-bit little-endian from field_data[1] and field_data[2]
+                    int16_t temp_raw = (field_data[1] | (field_data[2] << 8));
+                    temperature_out = static_cast<double>(temp_raw) / 10.0; // Scaled by 10.0
+
+                    // Humidity: 8-bit from field_data[3]
+                    humidity_out = static_cast<double>(field_data[3]); // Direct percentage
+
+                    if (verbose_output) {
+                        std::cout << "Temperature: " << temperature_out << " C, ";
+                        std::cout << "Humidity: " << humidity_out << " %";
+                    }
+                } else {
+                    if (verbose_output) {
+                        std::cout << "Not enough data for full decoding (expected at least 4 bytes, got " << field_data_len << ")";
+                    }
+                }
+                if (verbose_output) {
+                    std::cout << std::endl;
+                }
+                break;
+            }
+            // Add more cases for other AD types if specific decoding is needed
+        }
+        offset += field_len + 1; // Move to the next advertising data field
+    }
+}
+
+void TP357Handler::handle(const std::string& addr, int8_t rssi, uint8_t *data, int len) {
+    std::string device_name;
+    double temperature = -999.0;
+    double humidity = -999.0;
+
+    // Parse specific data for TP357 and get the name (again, for verbose output)
+    parse_advertising_data_tp357(data, len, device_name, temperature, humidity, true);
+
+    std::cout << "\n--- Detected TP357 Device ---" << std::endl;
+    std::cout << "Address: " << addr << std::endl;
+    std::cout << "RSSI: " << (int)rssi << std::endl;
+    // parse_advertising_data_tp357 already prints the detailed decoded fields.
+    std::cout << "-----------------------------" << std::endl;
+}
+
+
+// --- BluetoothScanner Implementation ---
+
 BluetoothScanner::BluetoothScanner() : dd_(-1), keep_running_(true) {
     // Constructor: Initializes members. Device is opened in init().
 }
@@ -182,30 +281,22 @@ void BluetoothScanner::startScan() {
                     // Convert Bluetooth address to string
                     ba2str(&info->bdaddr, addr);
 
-                    // RSSI is the last byte of the advertising data (info->data).
-                    // info->length is the length of the AD data *excluding* RSSI.
-                    // The RSSI byte is at info->data[info->length].
-                    int8_t rssi = (int8_t)info->data[info->length];
-
                     std::string device_name;
-                    double temperature = -999.0;
-                    double humidity = -999.0;
+                    // General parsing to extract device name for filtering
+                    parse_advertising_data_general(info->data, info->length, device_name);
 
-                    // Always try to parse the device name and sensor data
-                    parse_advertising_data(info->data, info->length, device_name, temperature, humidity, false);
+                    bool handled = false;
+                    for (const auto& handler : device_handlers_) {
+                        if (handler->canHandle(device_name)) {
+                            handler->handle(addr, (int8_t)info->data[info->length], info->data, info->length);
+                            handled = true;
+                            break; // Handled by this, move to next report
+                        }
+                    }
 
-                    // Check if the device name contains "TP357"
-                    if (device_name.find("TP357") != std::string::npos) {
-                        std::cout << "\n--- Detected TP357 Device ---" << std::endl;
-                        std::cout << "Address: " << addr << std::endl;
-                        std::cout << "RSSI: " << (int)rssi << std::endl;
-                        // Now, print verbose AD types and decoded sensor data for TP357 devices
-                        parse_advertising_data(info->data, info->length, device_name, temperature, humidity, true);
-                        std::cout << "-----------------------------" << std::endl;
-                    } else {
-                        // For non-TP357 devices, do not print any output to filter them out
-                        // If you want to see a concise summary for non-TP357 devices, uncomment the line below:
-                        // std::cout << "\nAdvertisement from (non-TP357): " << addr << " (Name: \"" << device_name << "\", RSSI: " << (int)rssi << ")" << std::endl;
+                    if (!handled) {
+                        // If no specific handler, you can choose to print a generic message or nothing
+                        // std::cout << "\nAdvertisement from (unhandled device): " << addr << " (Name: \"" << device_name << "\", RSSI: " << (int)info->data[info->length] << ")" << std::endl;
                     }
 
                     // Move pointer to the next advertising info struct.
@@ -232,79 +323,32 @@ void BluetoothScanner::stopScan() {
     }
 }
 
-// Private helper function implementation
-void BluetoothScanner::parse_advertising_data(uint8_t *data, int len, std::string& device_name_out,
-                                            double& temperature_out, double& humidity_out, bool verbose_output) {
-    device_name_out.clear(); // Clear previous name for each new advertisement
-    temperature_out = -999.0; // Initialize with an invalid value
-    humidity_out = -999.0;    // Initialize with an invalid value
-
+// Private helper function implementation for general advertising data parsing (mainly for name)
+void BluetoothScanner::parse_advertising_data_general(uint8_t *data, int len, std::string& device_name_out) {
+    device_name_out.clear();
     int offset = 0;
     while (offset < len) {
         uint8_t field_len = data[offset];
-        if (field_len == 0) break; // End of advertising data
+        if (field_len == 0) break;
 
         uint8_t field_type = data[offset + 1];
         uint8_t *field_data = &data[offset + 2];
         int field_data_len = field_len - 1;
 
-        if (verbose_output) {
-            // Print all AD types and their raw data for debugging/completeness
-            std::cout << "    AD Type: 0x" << std::hex << (int)field_type << std::dec << " (Len: " << (int)field_len << ") Raw Data: ";
-            for (int i = 0; i < field_data_len; ++i) {
-                printf("%02X ", field_data[i]);
-            }
-            std::cout << std::endl;
-        }
-
         switch (field_type) {
             case AD_TYPE_COMPLETE_LOCAL_NAME:
             case AD_TYPE_SHORT_LOCAL_NAME: {
-                // Extract device name
                 device_name_out.assign((char*)field_data, field_data_len);
-                if (verbose_output) {
-                    std::cout << "      Decoded Device Name: \"" << device_name_out << "\"" << std::endl;
-                }
                 break;
             }
-            case AD_TYPE_MANUFACTURER_SPECIFIC_DATA: {
-                if (verbose_output) {
-                    std::cout << "      Decoded Manufacturer Specific Data: ";
-                }
-                // Check if enough data for Company ID (2 bytes), Temperature (2 bytes), and Humidity (1 byte)
-                // Based on ESP32 snippet, temperature is at index 1,2 (little-endian) and humidity at index 3.
-                // So, we need at least 4 bytes of manufacturer data (field_data[0] to field_data[3])
-                if (field_data_len >= 4) {
-                    uint16_t company_id = field_data[0] | (field_data[1] << 8); // Little-endian Company ID
-                    if (verbose_output) {
-                        std::cout << "Company ID: 0x" << std::hex << company_id << std::dec << " ";
-                    }
-
-                    // Temperature: 16-bit little-endian from field_data[1] and field_data[2]
-                    int16_t temp_raw = (field_data[1] | (field_data[2] << 8));
-                    temperature_out = static_cast<double>(temp_raw) / 10.0; // Scaled by 10.0
-
-                    // Humidity: 8-bit from field_data[3]
-                    humidity_out = static_cast<double>(field_data[3]); // Direct percentage
-
-                    if (verbose_output) {
-                        std::cout << "Temperature: " << temperature_out << " C, ";
-                        std::cout << "Humidity: " << humidity_out << " %";
-                    }
-                } else {
-                    if (verbose_output) {
-                        std::cout << "Not enough data for full decoding (expected at least 4 bytes, got " << field_data_len << ")";
-                    }
-                }
-                if (verbose_output) {
-                    std::cout << std::endl;
-                }
-                break;
-            }
-            // Add more cases for other AD types if specific decoding is needed
-            // default: raw data already printed above (if verbose)
         }
-        offset += field_len + 1; // Move to the next advertising data field
+        offset += field_len + 1;
+    }
+}
+
+void BluetoothScanner::registerHandler(std::unique_ptr<IDeviceHandler> handler) {
+    if (handler) {
+        device_handlers_.push_back(std::move(handler));
     }
 }
 

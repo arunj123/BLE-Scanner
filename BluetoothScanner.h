@@ -2,7 +2,10 @@
 #define BLUETOOTH_SCANNER_H
 
 #include <string>
+#include <vector>
+#include <memory> // For std::unique_ptr
 #include <atomic> // For std::atomic_bool
+
 #include <bluetooth/bluetooth.h> // For ba2str
 #include <bluetooth/hci.h>       // For HCI event types and structures
 #include <bluetooth/hci_lib.h>   // For hci_open_dev, hci_close_dev, etc.
@@ -45,6 +48,31 @@ typedef struct {
 #endif
 // --- End of conditional definitions ---
 
+// Interface for device-specific handlers
+class IDeviceHandler {
+public:
+    virtual ~IDeviceHandler() = default;
+
+    // Returns true if this handler can process the given device name.
+    virtual bool canHandle(const std::string& device_name) const = 0;
+
+    // Handles the processing and printing of advertising data for a matching device.
+    virtual void handle(const std::string& addr, int8_t rssi, uint8_t *data, int len) = 0;
+};
+
+// Concrete handler for TP357 devices
+class TP357Handler : public IDeviceHandler {
+public:
+    bool canHandle(const std::string& device_name) const override;
+    void handle(const std::string& addr, int8_t rssi, uint8_t *data, int len) override;
+
+private:
+    // Helper function to parse advertising data for TP357 specific details
+    static void parse_advertising_data_tp357(uint8_t *data, int len, std::string& device_name_out,
+                                             double& temperature_out, double& humidity_out, bool verbose_output);
+};
+
+
 class BluetoothScanner {
 public:
     BluetoothScanner();
@@ -58,15 +86,19 @@ public:
     void startScan();
 
     // Stops the BLE scanning loop and cleans up the HCI device.
-    void stopScan();
+    void
+    stopScan();
+
+    // Registers a new device handler. Ownership is transferred to the scanner.
+    void registerHandler(std::unique_ptr<IDeviceHandler> handler);
 
 private:
     int dd_; // Device descriptor for the HCI device
     std::atomic<bool> keep_running_; // Flag to control the scanning loop
+    std::vector<std::unique_ptr<IDeviceHandler>> device_handlers_; // Registered device handlers
 
-    // Private helper function to parse advertising data
-    void parse_advertising_data(uint8_t *data, int len, std::string& device_name_out,
-                                double& temperature_out, double& humidity_out, bool verbose_output);
+    // Private helper function to parse advertising data (general purpose, used for name extraction)
+    void parse_advertising_data_general(uint8_t *data, int len, std::string& device_name_out);
 };
 
 #endif // BLUETOOTH_SCANNER_H

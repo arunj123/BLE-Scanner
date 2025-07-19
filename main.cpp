@@ -22,6 +22,11 @@ int main(int argc, char **argv) {
     BluetoothScanner scanner;
     g_scanner_ptr = &scanner; // Assign global pointer
 
+    // Register device handlers
+    scanner.registerHandler(std::make_unique<TP357Handler>());
+    // Add more handlers here for other device types if needed in the future:
+    // scanner.registerHandler(std::make_unique<AnotherDeviceHandler>());
+
     // Initialize the Bluetooth scanner
     if (!scanner.init()) {
         std::cerr << "Failed to initialize Bluetooth scanner. Exiting." << std::endl;
@@ -39,5 +44,4 @@ int main(int argc, char **argv) {
     std::cout << "Main thread exiting." << std::endl;
     return 0;
 }
-
 
