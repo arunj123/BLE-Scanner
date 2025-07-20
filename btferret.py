@@ -11,7 +11,7 @@ ITAG_MAC_ADDRESS = "23:06:17:02:84:37"
 #   index 4: FFE1 UUID (Permit 12 rn) - Most likely for button notifications
 #   index 2: Alert Level UUID (Permit 0A rwa) - For setting immediate alerts
 BUTTON_CHARACTERISTIC_INDEX = 4
-ALERT_LEVEL_CHARACTERISTIC_INDEX = 2 # Reverted to index 2 for Alert Level
+ALERT_LEVEL_CHARACTERISTIC_INDEX = 3
 
 # Global variable to store the connected node ID
 current_itag_node_id = -1
@@ -159,39 +159,41 @@ def connect_and_monitor_itag():
     display_prompt() # Initial prompt
 
     try:
+        # set_immediate_alert(current_itag_node_id, 1) # Set initial alert level to 1 (Mild Alert)
         while True:
             # Read notifications with a short timeout.
             # This ensures notifications are processed frequently.
             btfpy.Read_notify(100) # Read for 100ms
             
-            # Check for user input. This will block until Enter is pressed.
-            try:
-                # Use select.select to check for input without blocking indefinitely
-                # This ensures notifications are processed even if no command is typed.
-                rlist, _, _ = select.select([sys.stdin], [], [], 0.1) # 0.0 timeout for non-blocking
-                if rlist: # If there's input available
-                    command = sys.stdin.readline().strip()
-                    if command: # Only process if input is not empty
-                        if command.startswith('a'):
-                            try:
-                                level = int(command[1:])
-                                set_immediate_alert(current_itag_node_id, level)
-                            except ValueError:
-                                clear_prompt_if_active() # Clear prompt for error message
-                                print("Invalid alert command format. Use a0, a1, or a2.")
+            if False: # Placeholder for any other periodic tasks
+                # Check for user input. This will block until Enter is pressed.
+                try:
+                    # Use select.select to check for input without blocking indefinitely
+                    # This ensures notifications are processed even if no command is typed.
+                    rlist, _, _ = select.select([sys.stdin], [], [], 0.01) # 0.0 timeout for non-blocking
+                    if rlist: # If there's input available
+                        command = sys.stdin.readline().strip()
+                        if command: # Only process if input is not empty
+                            if command.startswith('a'):
+                                try:
+                                    level = int(command[1:])
+                                    set_immediate_alert(current_itag_node_id, level)
+                                except ValueError:
+                                    clear_prompt_if_active() # Clear prompt for error message
+                                    print("Invalid alert command format. Use a0, a1, or a2.")
+                                    display_prompt() # Re-prompt
+                            else:
+                                clear_prompt_if_active() # Clear prompt for unknown command
+                                print("Unknown command.")
                                 display_prompt() # Re-prompt
-                        else:
-                            clear_prompt_if_active() # Clear prompt for unknown command
-                            print("Unknown command.")
+                        else: # User just pressed Enter without typing a command
                             display_prompt() # Re-prompt
-                    else: # User just pressed Enter without typing a command
-                        display_prompt() # Re-prompt
-            except EOFError: # Handle Ctrl+D
-                print("\nEOF detected. Exiting.")
-                break # Exit the loop
-            except Exception as e:
-                print(f"Input error: {e}")
-                break # Exit on other input errors
+                except EOFError: # Handle Ctrl+D
+                    print("\nEOF detected. Exiting.")
+                    break # Exit the loop
+                except Exception as e:
+                    print(f"Input error: {e}")
+                    break # Exit on other input errors
             
             time.sleep(0.01) # Small delay to reduce CPU usage
             
