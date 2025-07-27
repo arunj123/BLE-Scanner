@@ -166,7 +166,7 @@ bool BluetoothScanner::init() {
     std::cout << "Opened HCI device with ID: " << dev_id << std::endl;
 
     // Set LE scan parameters
-    uint8_t scan_type = 0x01; // Active scanning (0x00 for Passive)
+    uint8_t scan_type = 0x00; // Passive scanning (0x00 for Passive, 0x01 for Active)
     uint16_t interval = htobs(0x0010); // 10 ms (0x0010 * 0.625ms = 10ms)
     uint16_t window = htobs(0x0010);   // 10 ms
     uint8_t own_address_type = 0x00; // Public address
