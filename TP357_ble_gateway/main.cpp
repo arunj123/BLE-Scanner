@@ -11,6 +11,7 @@
 #include "SQLiteDatabaseManager.h" // Provides full definition of SQLiteDatabaseManager
 #include "FirestoreManager.h"      // Provides full definition of FirestoreManager
 #include "DataProcessor.h"         // Provides full definition of DataProcessor
+#include "EnvReader.h"             // Provides full definition of EnvReader
 
 #include "BluetoothScanner.h"      // Include the BluetoothScanner class
 
@@ -32,6 +33,16 @@ void signal_handler(int signum) {
 int main(int argc, char **argv) {
     // Register signal handler for Ctrl+C
     std::signal(SIGINT, signal_handler);
+
+    // --- Read settings from .env file ---
+    EnvReader env_reader;
+    if (!env_reader.load(".env")) {
+        std::cerr << "Could not load .env file. Using default settings." << std::endl;
+    }
+
+    // Get Firestore config path from .env or use a default placeholder
+    std::string firestore_config_path = env_reader.getOrDefault("FIRESTORE_CONFIG_PATH", "default_firestore_config.json");
+    std::cout << "Using Firestore config path: " << firestore_config_path << std::endl;
 
     // Create the message queue
     MessageQueue sensor_data_queue;
@@ -73,10 +84,7 @@ int main(int argc, char **argv) {
 
     // Create and initialize the Firestore manager (conceptual)
     auto firestore_manager = std::make_unique<FirestoreManager>();
-    // In a real application, replace "path/to/your/serviceAccountKey.json" with the actual path
-    // and handle potential initialization failures for Firestore as well.
-    // For demonstration, we'll assume it initializes successfully for now.
-    if (!firestore_manager->initialize("conceptual_firestore_config.json")) {
+    if (!firestore_manager->initialize(firestore_config_path)) { // Use path from .env
         std::cerr << "Failed to initialize Firestore manager. Proceeding with SQLite only." << std::endl;
         // If Firestore init fails, DataProcessor will effectively only use SQLite.
         // No need to exit here, as SQLite is the fallback.

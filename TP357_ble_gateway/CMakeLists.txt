@@ -14,7 +14,8 @@ add_executable(tp357_gateway
     MessageQueue.cpp
     SQLiteDatabaseManager.cpp
     DataProcessor.cpp
-    FirestoreManager.cpp # Add the new FirestoreManager source file
+    FirestoreManager.cpp
+    EnvReader.cpp # Add the new EnvReader source file
 )
 
 # Link tp357_gateway with its dependencies, including our new btlib library, SQLite3, and pthread
