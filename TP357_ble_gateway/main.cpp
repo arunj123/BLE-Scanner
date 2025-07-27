@@ -9,6 +9,7 @@
 // Include full definitions of classes used as concrete objects or template arguments first
 #include "MessageQueue.h"          // Provides full definition of MessageQueue
 #include "SQLiteDatabaseManager.h" // Provides full definition of SQLiteDatabaseManager
+#include "FirestoreManager.h"      // Provides full definition of FirestoreManager
 #include "DataProcessor.h"         // Provides full definition of DataProcessor
 
 #include "BluetoothScanner.h"      // Include the BluetoothScanner class
@@ -63,7 +64,6 @@ int main(int argc, char **argv) {
     }
 
     // Create and initialize the SQLite database manager
-    // std::make_unique requires the full definition of SQLiteDatabaseManager
     auto sqlite_db_manager = std::make_unique<SQLiteDatabaseManager>();
     if (!sqlite_db_manager->initialize("sensor_readings.db")) {
         std::cerr << "Failed to initialize SQLite database. Exiting." << std::endl;
@@ -71,8 +71,23 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Create the data processor, passing the message queue and the database manager
-    DataProcessor data_processor(sensor_data_queue, std::move(sqlite_db_manager));
+    // Create and initialize the Firestore manager (conceptual)
+    auto firestore_manager = std::make_unique<FirestoreManager>();
+    // In a real application, replace "path/to/your/serviceAccountKey.json" with the actual path
+    // and handle potential initialization failures for Firestore as well.
+    // For demonstration, we'll assume it initializes successfully for now.
+    if (!firestore_manager->initialize("conceptual_firestore_config.json")) {
+        std::cerr << "Failed to initialize Firestore manager. Proceeding with SQLite only." << std::endl;
+        // If Firestore init fails, DataProcessor will effectively only use SQLite.
+        // No need to exit here, as SQLite is the fallback.
+    }
+
+    // Example of simulating Firestore going offline/online
+    firestore_manager->setSimulatedOnlineStatus(false); // Uncomment to simulate offline
+    // firestore_manager->setSimulatedOnlineStatus(true);  // Uncomment to simulate online
+
+    // Create the data processor, passing both message queue and database managers
+    DataProcessor data_processor(sensor_data_queue, std::move(sqlite_db_manager), std::move(firestore_manager));
     g_data_processor_ptr = &data_processor; // Assign global data processor pointer
 
     // Start the data processing loop in a separate thread

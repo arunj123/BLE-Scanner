@@ -32,11 +32,10 @@ bool SQLiteDatabaseManager::initialize(const std::string& db_path) {
     }
 
     // SQL statement to create the table if it does not exist
+    // MAC_ADDRESS and DECODED_DEVICE_NAME columns are removed.
     const char* sql = "CREATE TABLE IF NOT EXISTS sensor_readings ("
                       "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
-                      "MAC_ADDRESS TEXT NOT NULL,"
-                      "PREDEFINED_NAME TEXT,"
-                      "DECODED_DEVICE_NAME TEXT,"
+                      "PREDEFINED_NAME TEXT," // Only predefined name
                       "TEMPERATURE REAL,"
                       "HUMIDITY REAL,"
                       "RSSI INTEGER,"
@@ -60,6 +59,7 @@ bool SQLiteDatabaseManager::initialize(const std::string& db_path) {
 
 /**
  * @brief Inserts a SensorData object into the SQLite database.
+ * This implementation will NOT store MAC_ADDRESS or DECODED_DEVICE_NAME.
  * @param data The SensorData object to insert.
  * @return True on successful insertion, false on failure.
  */
@@ -84,9 +84,9 @@ bool SQLiteDatabaseManager::insertSensorData(const SensorData& data) {
     std::stringstream ss;
     ss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%SZ"); // Format as YYYY-MM-DDTHH:MM:SSZ
 
-    // SQL INSERT statement with placeholders
-    std::string sql = "INSERT INTO sensor_readings (MAC_ADDRESS, PREDEFINED_NAME, DECODED_DEVICE_NAME, TEMPERATURE, HUMIDITY, RSSI, TIMESTAMP) "
-                      "VALUES (?, ?, ?, ?, ?, ?, ?);";
+    // SQL INSERT statement with placeholders, excluding MAC_ADDRESS and DECODED_DEVICE_NAME
+    std::string sql = "INSERT INTO sensor_readings (PREDEFINED_NAME, TEMPERATURE, HUMIDITY, RSSI, TIMESTAMP) "
+                      "VALUES (?, ?, ?, ?, ?);";
 
     // Prepare the SQL statement
     rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, 0);
@@ -96,14 +96,13 @@ bool SQLiteDatabaseManager::insertSensorData(const SensorData& data) {
     }
 
     // Bind values to the placeholders
-    sqlite3_bind_text(stmt, 1, data.mac_address.c_str(), -1, SQLITE_TRANSIENT);
+    // Note: MAC_ADDRESS and DECODED_DEVICE_NAME are intentionally not bound here
     // If predefined_name is empty, bind NULL to the database column
-    sqlite3_bind_text(stmt, 2, data.predefined_name.empty() ? nullptr : data.predefined_name.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, data.decoded_device_name.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_double(stmt, 4, data.temperature);
-    sqlite3_bind_double(stmt, 5, data.humidity);
-    sqlite3_bind_int(stmt, 6, data.rssi);
-    sqlite3_bind_text(stmt, 7, ss.str().c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 1, data.predefined_name.empty() ? nullptr : data.predefined_name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_double(stmt, 2, data.temperature);
+    sqlite3_bind_double(stmt, 3, data.humidity);
+    sqlite3_bind_int(stmt, 4, data.rssi);
+    sqlite3_bind_text(stmt, 5, ss.str().c_str(), -1, SQLITE_TRANSIENT);
 
     // Execute the prepared statement
     rc = sqlite3_step(stmt);
@@ -114,6 +113,7 @@ bool SQLiteDatabaseManager::insertSensorData(const SensorData& data) {
     }
 
     sqlite3_finalize(stmt); // Finalize the statement
+    std::cout << "Successfully inserted data for " << data.predefined_name << " into SQLite." << std::endl;
     return true;
 }
 

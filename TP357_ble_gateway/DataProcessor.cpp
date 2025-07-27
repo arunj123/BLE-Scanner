@@ -6,10 +6,16 @@
 /**
  * @brief Constructs a DataProcessor.
  * @param queue Reference to the MessageQueue from which to consume data.
- * @param db_manager A unique_ptr to an IDatabaseManager instance. Ownership is transferred.
+ * @param sqlite_db_manager A unique_ptr to an IDatabaseManager instance for SQLite. Ownership is transferred.
+ * @param firestore_manager A unique_ptr to an IFirestoreManager instance for Firestore. Ownership is transferred.
  */
-DataProcessor::DataProcessor(MessageQueue& queue, std::unique_ptr<IDatabaseManager> db_manager)
-    : queue_(queue), db_manager_(std::move(db_manager)), keep_running_(true) {
+DataProcessor::DataProcessor(MessageQueue& queue,
+                             std::unique_ptr<IDatabaseManager> sqlite_db_manager,
+                             std::unique_ptr<IFirestoreManager> firestore_manager)
+    : queue_(queue),
+      sqlite_db_manager_(std::move(sqlite_db_manager)),
+      firestore_manager_(std::move(firestore_manager)),
+      keep_running_(true) {
     // Constructor initializes members. Thread is started by startProcessing().
 }
 
@@ -60,27 +66,36 @@ void DataProcessor::processingLoop() {
             SensorData data = *data_opt;
 
             // Check if this is the dummy shutdown signal.
-            // A simple check like empty MAC address can signify dummy data.
-            // This check is important as the queue.pop() might return a valid SensorData
-            // object just before keep_running_ becomes false, so we need to differentiate
-            // between actual data and the shutdown signal.
             if (!keep_running_.load() && data.mac_address.empty() && data.predefined_name.empty() && data.decoded_device_name.empty()) {
                 std::cout << "Received shutdown signal in processing loop." << std::endl;
                 break; // Exit the loop
             }
 
-            if (db_manager_) {
-                if (db_manager_->insertSensorData(data)) {
-                    // std::cout << "Inserted data for " << data.mac_address << " into DB." << std::endl;
+            bool inserted_to_firestore = false;
+            // Attempt to insert to Firestore if online and manager is available
+            if (firestore_manager_ && firestore_manager_->isOnline()) {
+                std::cout << "Attempting to insert data for " << data.predefined_name << " to Firestore..." << std::endl;
+                if (firestore_manager_->insertSensorData(data)) {
+                    std::cout << "Successfully inserted data for " << data.predefined_name << " to Firestore." << std::endl;
+                    inserted_to_firestore = true;
                 } else {
-                    std::cerr << "Failed to insert data for " << data.mac_address << " into DB." << std::endl;
+                    std::cerr << "Failed to insert data for " << data.predefined_name << " to Firestore. Falling back to SQLite." << std::endl;
                 }
             } else {
-                std::cerr << "Database manager not available in DataProcessor." << std::endl;
+                std::cout << "Firestore is offline or not configured. Falling back to SQLite." << std::endl;
+            }
+
+            // If Firestore insertion failed or was skipped, try SQLite
+            if (!inserted_to_firestore) {
+                if (sqlite_db_manager_) {
+                    // SQLiteDatabaseManager::insertSensorData already prints success/failure
+                    sqlite_db_manager_->insertSensorData(data);
+                } else {
+                    std::cerr << "SQLite database manager not available in DataProcessor." << std::endl;
+                }
             }
         }
         // Small sleep to prevent busy-waiting if the queue is frequently empty
-        // and pop() returns std::nullopt (though with cv.wait, this is less critical).
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     std::cout << "Data processing loop exited." << std::endl;

@@ -14,6 +14,7 @@ add_executable(tp357_gateway
     MessageQueue.cpp
     SQLiteDatabaseManager.cpp
     DataProcessor.cpp
+    FirestoreManager.cpp # Add the new FirestoreManager source file
 )
 
 # Link tp357_gateway with its dependencies, including our new btlib library, SQLite3, and pthread
@@ -22,6 +23,9 @@ target_link_libraries(tp357_gateway PRIVATE
     ${BLUETOOTH_LIBRARIES}
     pthread
     ${SQLite3_LIBRARIES} # Link SQLite3
+    # If using real Firebase Admin SDK, you would link it here:
+    # firebase_app
+    # firebase_firestore
 )
 
 # Add required capabilities to the final executable to run without sudo
