@@ -4,30 +4,57 @@
 #include <csignal>  // For std::signal
 #include <map>      // For std::map to track connected iTags
 #include <mutex>    // For std::mutex to protect shared resources
+#include <memory>   // For std::unique_ptr
 
-#include "BluetoothScanner.h" // Include the BluetoothScanner class
+// Include full definitions of classes used as concrete objects or template arguments first
+#include "MessageQueue.h"          // Provides full definition of MessageQueue
+#include "SQLiteDatabaseManager.h" // Provides full definition of SQLiteDatabaseManager
+#include "DataProcessor.h"         // Provides full definition of DataProcessor
 
-// Global pointer to the BluetoothScanner instance, for signal handler access
+#include "BluetoothScanner.h"      // Include the BluetoothScanner class
+
+// Global pointers for graceful shutdown
 BluetoothScanner* g_scanner_ptr = nullptr;
+DataProcessor* g_data_processor_ptr = nullptr;
 
 // Signal handler function to gracefully terminate the program
 void signal_handler(int signum) {
     std::cout << "\nSIGINT received. Initiating graceful shutdown..." << std::endl;
-    if (g_scanner_ptr) {
-        g_scanner_ptr->stopScan(); // Tell the scanner thread to stop
+    if (g_data_processor_ptr) {
+        g_data_processor_ptr->stopProcessing(); // Stop data processing first
     }
-    // No explicit stop for GATT manager here, its destructor will handle cleanup
+    if (g_scanner_ptr) {
+        g_scanner_ptr->stopScan(); // Then tell the scanner thread to stop
+    }
 }
 
 int main(int argc, char **argv) {
     // Register signal handler for Ctrl+C
     std::signal(SIGINT, signal_handler);
 
+    // Create the message queue
+    MessageQueue sensor_data_queue;
+
+    // Create the Bluetooth scanner instance
     BluetoothScanner scanner;
     g_scanner_ptr = &scanner; // Assign global scanner pointer
 
-    // Register device handlers
-    scanner.registerHandler(std::make_unique<TP357Handler>());
+    // Create a TP357Handler instance
+    auto tp357_handler = std::make_unique<TP357Handler>();
+
+    // Set the message queue for the handler so it can push data
+    tp357_handler->setMessageQueue(&sensor_data_queue);
+
+    // Register predefined names for your TP357 devices
+    // Based on the provided log output
+    tp357_handler->setDeviceName("E2:76:F5:4B:E4:F0", "Living Room Sensor");
+    tp357_handler->setDeviceName("F8:5F:2B:62:E5:F5", "Kitchen Sensor");
+    tp357_handler->setDeviceName("DF:50:8B:21:84:89", "Bedroom Sensor");
+    tp357_handler->setDeviceName("D6:05:85:FD:C0:BC", "Outdoor Sensor");
+    tp357_handler->setDeviceName("CE:2C:40:3C:73:F7", "Garage Sensor");
+
+    // Register the handler with the scanner
+    scanner.registerHandler(std::move(tp357_handler));
 
     // Initialize the Bluetooth scanner
     if (!scanner.init()) {
@@ -35,13 +62,31 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Create and initialize the SQLite database manager
+    // std::make_unique requires the full definition of SQLiteDatabaseManager
+    auto sqlite_db_manager = std::make_unique<SQLiteDatabaseManager>();
+    if (!sqlite_db_manager->initialize("sensor_readings.db")) {
+        std::cerr << "Failed to initialize SQLite database. Exiting." << std::endl;
+        scanner.stopScan(); // Ensure scanner is stopped if DB init fails
+        return 1;
+    }
+
+    // Create the data processor, passing the message queue and the database manager
+    DataProcessor data_processor(sensor_data_queue, std::move(sqlite_db_manager));
+    g_data_processor_ptr = &data_processor; // Assign global data processor pointer
+
+    // Start the data processing loop in a separate thread
+    data_processor.startProcessing();
+
     // Start the scanning loop in a separate thread
     std::thread scanner_thread(&BluetoothScanner::startScan, &scanner);
 
-    // Main thread can do other work or simply wait for the scanner thread to finish
-    // For this example, we'll just join the thread to wait for it to complete
+    // Main thread waits for the scanner thread to finish
     // (which happens when Ctrl+C is pressed and stopScan() is called).
     scanner_thread.join();
+
+    // Ensure data processor also finishes after scanner, if not already stopped by signal handler
+    data_processor.stopProcessing();
 
     std::cout << "Main thread exiting." << std::endl;
     return 0;

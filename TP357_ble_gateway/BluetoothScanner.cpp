@@ -1,5 +1,7 @@
 // BluetoothScanner.cpp
 #include "BluetoothScanner.h"
+#include "MessageQueue.h" // Include for MessageQueue (full definition needed for TP357Handler::setMessageQueue)
+#include "SensorData.h"   // Include for SensorData (full definition needed for creating SensorData objects)
 #include <iostream>
 #include <cstring>
 #include <unistd.h>
@@ -8,6 +10,7 @@
 #include <sys/select.h> // Required for select()
 #include <algorithm> // For std::max
 #include <fcntl.h> // For fcntl and O_NONBLOCK
+#include <chrono> // For std::chrono::system_clock::now()
 
 // --- TP357Handler Implementation ---
 
@@ -91,19 +94,49 @@ void TP357Handler::parse_advertising_data_tp357(uint8_t *data, int len, std::str
 }
 
 void TP357Handler::handle(const std::string& addr, int8_t rssi, uint8_t *data, int len) {
-    std::string device_name;
+    std::string decoded_device_name;
     double temperature = -999.0;
     double humidity = -999.0;
 
     // Parse specific data for TP357 and get the name (again, for verbose output)
-    TP357Handler::parse_advertising_data_tp357(data, len, device_name, temperature, humidity, true);
+    TP357Handler::parse_advertising_data_tp357(data, len, decoded_device_name, temperature, humidity, true);
 
     std::cout << "\n--- Detected TP357 Device ---" << std::endl;
     std::cout << "Address: " << addr << std::endl;
+
+    std::string predefined_name;
+    // Check if a predefined name exists for this MAC address
+    auto it = device_names_.find(addr);
+    if (it != device_names_.end()) {
+        predefined_name = it->second;
+        std::cout << "Predefined Name: " << predefined_name << std::endl;
+    } else {
+        std::cout << "Decoded Device Name: \"" << decoded_device_name << "\"" << std::endl;
+    }
+
     std::cout << "RSSI: " << (int)rssi << std::endl;
     // parse_advertising_data_tp357 already prints the detailed decoded fields.
     std::cout << "-----------------------------" << std::endl;
+
+    // Create SensorData object with current timestamp
+    SensorData sensor_data(addr, predefined_name, decoded_device_name, temperature, humidity, rssi, std::chrono::system_clock::now());
+
+    // Push data to the message queue if available
+    if (message_queue_) {
+        message_queue_->push(sensor_data);
+    } else {
+        std::cerr << "Warning: Message queue not set in TP357Handler. Data not queued." << std::endl;
+    }
 }
+
+void TP357Handler::setDeviceName(const std::string& mac_address, const std::string& name) {
+    device_names_[mac_address] = name;
+}
+
+void TP357Handler::setMessageQueue(MessageQueue* queue) {
+    message_queue_ = queue;
+}
+
 
 // --- BluetoothScanner Implementation ---
 
@@ -353,23 +386,25 @@ void BluetoothScanner::startScan() {
                         // Convert Bluetooth address to string
                         ba2str(&info->bdaddr, addr);
 
-                        std::string device_name;
+                        std::string device_name_from_ad; // Use a distinct name for clarity
                         // General parsing to extract device name for filtering
-                        BluetoothScanner::parse_advertising_data_general(info->data, info->length, device_name);
+                        BluetoothScanner::parse_advertising_data_general(info->data, info->length, device_name_from_ad);
 
                         bool handled = false;
                         for (const auto& handler : device_handlers_) {
-                            if (handler->canHandle(device_name)) {
+                            if (handler->canHandle(device_name_from_ad)) {
                                 // Pass RSSI as int8_t directly from info->data[info->length]
                                 handler->handle(addr, (int8_t)info->data[info->length], info->data, info->length);
                                 handled = true;
-                                break; // Handled by this, move to next report
+                                // No break here, as multiple handlers might be interested in the same device
+                                // For this specific case, TP357Handler is the only one, but for extensibility...
+                                // If only one handler should process, add 'break;' here.
                             }
                         }
 
                         if (!handled) {
                             // If no specific handler, you can choose to print a generic message or nothing
-                            // std::cout << "\nAdvertisement from (unhandled device): " << addr << " (Name: \"" << device_name << "\", RSSI: " << (int)info->data[info->length] << ")" << std::endl;
+                            // std::cout << "\nAdvertisement from (unhandled device): " << addr << " (Name: \"" << device_name_from_ad << "\", RSSI: " << (int)info->data[info->length] << ")" << std::endl;
                         }
 
                         // Move pointer to the next advertising info struct.

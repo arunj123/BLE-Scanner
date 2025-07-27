@@ -4,11 +4,25 @@ project(tp357Gateway C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# --- Original tp357_gateway Application ---
-add_executable(tp357_gateway main.cpp BluetoothScanner.cpp)
+# Find SQLite3 library
+find_package(SQLite3 REQUIRED)
 
-# Link tp357_gateway with its dependencies, including our new btlib library
-target_link_libraries(tp357_gateway PRIVATE btlib ${BLUETOOTH_LIBRARIES} pthread)
+# --- Original tp357_gateway Application ---
+add_executable(tp357_gateway
+    main.cpp
+    BluetoothScanner.cpp
+    MessageQueue.cpp
+    SQLiteDatabaseManager.cpp
+    DataProcessor.cpp
+)
+
+# Link tp357_gateway with its dependencies, including our new btlib library, SQLite3, and pthread
+target_link_libraries(tp357_gateway PRIVATE
+    btlib
+    ${BLUETOOTH_LIBRARIES}
+    pthread
+    ${SQLite3_LIBRARIES} # Link SQLite3
+)
 
 # Add required capabilities to the final executable to run without sudo
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)

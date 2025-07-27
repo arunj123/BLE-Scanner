@@ -6,6 +6,10 @@
 #include <vector>
 #include <memory> // For std::unique_ptr
 #include <atomic> // For std::atomic_bool
+#include <map>    // For std::map to store device names
+
+// Forward declaration for MessageQueue as TP357Handler only holds a pointer to it.
+class MessageQueue; 
 
 #include <bluetooth/bluetooth.h> // For ba2str
 #include <bluetooth/hci.h>       // For HCI event types and structures
@@ -64,13 +68,19 @@ public:
 // Concrete handler for TP357 devices
 class TP357Handler : public IDeviceHandler {
 public:
+    TP357Handler() : message_queue_(nullptr) {} // Initialize pointer to null
     bool canHandle(const std::string& device_name) const override;
     void handle(const std::string& addr, int8_t rssi, uint8_t *data, int len) override;
+    void setDeviceName(const std::string& mac_address, const std::string& name);
+    void setMessageQueue(MessageQueue* queue); // Setter for the message queue
 
 private:
     // Helper function to parse advertising data for TP357 specific details
     static void parse_advertising_data_tp357(uint8_t *data, int len, std::string& device_name_out,
                                              double& temperature_out, double& humidity_out, bool verbose_output);
+
+    std::map<std::string, std::string> device_names_; // Map to store custom names for MAC addresses
+    MessageQueue* message_queue_; // Pointer to the message queue (not owned)
 };
 
 class BluetoothScanner {
