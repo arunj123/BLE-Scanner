@@ -1,3 +1,4 @@
+// BluetoothScanner.h
 #ifndef BLUETOOTH_SCANNER_H
 #define BLUETOOTH_SCANNER_H
 
@@ -48,9 +49,6 @@ typedef struct {
 #endif
 // --- End of conditional definitions ---
 
-// Forward declaration for the GATT client manager interface
-class IGattClientManager;
-
 // Interface for device-specific handlers (for advertising data)
 class IDeviceHandler {
 public:
@@ -74,28 +72,6 @@ private:
     static void parse_advertising_data_tp357(uint8_t *data, int len, std::string& device_name_out,
                                              double& temperature_out, double& humidity_out, bool verbose_output);
 };
-
-// Concrete handler for iTag devices (advertisement part)
-class ITagHandler : public IDeviceHandler {
-public:
-    // Constructor takes a pointer to the GATT client manager
-    ITagHandler(IGattClientManager* gatt_manager);
-    bool canHandle(const std::string& device_name) const override;
-    void handle(const std::string& addr, int8_t rssi, uint8_t *data, int len) override;
-
-private:
-    IGattClientManager* gatt_manager_; // Pointer to the GATT client manager
-};
-
-// Interface for managing GATT connections
-class IGattClientManager {
-public:
-    virtual ~IGattClientManager() = default;
-    // Requests a GATT connection to the specified address.
-    // This is a placeholder for actual connection logic.
-    virtual void requestGattConnection(const std::string& addr, const std::string& device_name) = 0;
-};
-
 
 class BluetoothScanner {
 public:
@@ -123,6 +99,7 @@ private:
     int dd_; // Device descriptor for the HCI device
     std::atomic<bool> keep_running_; // Flag to control the scanning loop
     std::vector<std::unique_ptr<IDeviceHandler>> device_handlers_; // Registered device handlers
+    int pipefd_[2]; // File descriptors for the self-pipe (pipefd_[0] for read, pipefd_[1] for write)
 };
 
 #endif // BLUETOOTH_SCANNER_H
