@@ -41,7 +41,8 @@ int main(int argc, char **argv) {
     }
 
     // Get Firestore config path from .env or use a default placeholder
-    std::string firestore_config_path = env_reader.getOrDefault("FIRESTORE_CONFIG_PATH", "default_firestore_config.json");
+    // This path should point to your Firebase service account key JSON file.
+    std::string firestore_config_path = env_reader.getOrDefault("FIRESTORE_CONFIG_PATH", "default_firestore_service_account.json");
     std::cout << "Using Firestore config path: " << firestore_config_path << std::endl;
 
     // Create the message queue
@@ -82,7 +83,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Create and initialize the Firestore manager (conceptual)
+    // Create and initialize the Firestore manager
     auto firestore_manager = std::make_unique<FirestoreManager>();
     if (!firestore_manager->initialize(firestore_config_path)) { // Use path from .env
         std::cerr << "Failed to initialize Firestore manager. Proceeding with SQLite only." << std::endl;
@@ -90,9 +91,8 @@ int main(int argc, char **argv) {
         // No need to exit here, as SQLite is the fallback.
     }
 
-    // Example of simulating Firestore going offline/online
-    firestore_manager->setSimulatedOnlineStatus(false); // Uncomment to simulate offline
-    // firestore_manager->setSimulatedOnlineStatus(true);  // Uncomment to simulate online
+    // Explicitly set Firestore to be online for real integration attempt
+    firestore_manager->setSimulatedOnlineStatus(true);
 
     // Create the data processor, passing both message queue and database managers
     DataProcessor data_processor(sensor_data_queue, std::move(sqlite_db_manager), std::move(firestore_manager));

@@ -3,16 +3,16 @@
 #include <iostream>
 #include <chrono>
 #include <random> // For simulating network flakiness
+#include <future> // For std::future to wait on Firebase async operations
+#include <thread> // Required for std::this_thread::sleep_for
 
-// Include Firebase Admin SDK headers here in a real application:
-// #include "firebase/app.h"
-// #include "firebase/firestore.h"
-// #include "firebase/app_options.h"
-// #include "firebase/log.h" // For logging
+// Firebase Admin SDK logging (optional)
+// #include "firebase/log.h"
 
 FirestoreManager::FirestoreManager()
-    // : app_(nullptr), db_(nullptr), // Initialize SDK pointers to nullptr in real app
-    : simulated_online_status_(true), is_initialized_(false) {
+    : app_(nullptr), db_(nullptr),
+      simulated_online_status_(false), // Default to false, set to true on successful init
+      is_initialized_(false) { // Initialize atomic bool
 }
 
 FirestoreManager::~FirestoreManager() {
@@ -20,111 +20,124 @@ FirestoreManager::~FirestoreManager() {
 }
 
 /**
- * @brief Initializes the conceptual Firestore connection.
- * In a real SDK, this would load credentials and initialize the Firebase App.
- * @param config_path Path to the Firebase service account key JSON file or other configuration.
+ * @brief Initializes the Firebase App and Firestore client.
+ * @param config_path Path to the Firebase service account key JSON file.
  * @return True on success, false on failure.
  */
 bool FirestoreManager::initialize(const std::string& config_path) {
-    if (is_initialized_) {
+    if (is_initialized_.load()) { // Use .load() for atomic bool
         std::cout << "FirestoreManager already initialized." << std::endl;
+        simulated_online_status_.store(true); // Ensure online if already initialized
         return true;
     }
 
-    config_path_ = config_path;
-    std::cout << "Initializing conceptual Firestore with config: " << config_path_ << std::endl;
+    std::cout << "Initializing Firebase App with service account: " << config_path << std::endl;
 
-    // --- REAL FIREBASE ADMIN SDK INITIALIZATION WOULD GO HERE ---
-    // Example (conceptual):
-    // firebase::AppOptions options;
-    // options.set_service_account_path(config_path.c_str());
-    // app_ = firebase::app::App::Create(options);
-    // if (!app_) {
-    //     std::cerr << "Failed to create Firebase App." << std::endl;
-    //     return false;
-    // }
-    // db_ = firebase::firestore::Firestore::GetInstance(app_);
-    // if (!db_) {
-    //     std::cerr << "Failed to get Firestore instance." << std::endl;
-    //     return false;
-    // }
-    // firebase::Set ); // Set logging level if needed
+    // Set Firebase logging (optional, for debugging)
+    // firebase::SetLogLevel(firebase::kLogLevelInfo);
 
-    // Simulate successful initialization
-    is_initialized_ = true;
-    std::cout << "Conceptual Firestore initialized successfully." << std::endl;
+    // Create the Firebase App using the service account path directly
+    // This is the correct way for SDK v13.0.0+
+    app_ = firebase::App::Create(firebase::AppOptions(), config_path.c_str());
+    if (!app_) {
+        std::cerr << "Failed to create Firebase App. Check service account path and permissions." << std::endl;
+        return false;
+    }
+
+    // Get the Firestore instance
+    db_ = firebase::firestore::Firestore::GetInstance(app_);
+    if (!db_) {
+        std::cerr << "Failed to get Firestore instance." << std::endl;
+        delete app_; // Corrected: Use delete on the pointer
+        app_ = nullptr;
+        return false;
+    }
+
+    is_initialized_.store(true); // Use .store() for atomic bool
+    simulated_online_status_.store(true); // Assume online after successful initialization
+    std::cout << "Firebase Firestore initialized successfully." << std::endl;
     return true;
 }
 
 /**
- * @brief Inserts a SensorData object into conceptual Firestore.
- * This method simulates success or failure based on the 'online' status.
+ * @brief Inserts a SensorData object into Firestore.
  * @param data The SensorData object to insert.
  * @return True on successful insertion, false on failure.
  */
 bool FirestoreManager::insertSensorData(const SensorData& data) {
-    if (!is_initialized_ || !simulated_online_status_.load()) {
+    if (!is_initialized_.load() || !simulated_online_status_.load()) { // Use .load()
         std::cerr << "Firestore is offline or not initialized. Cannot insert data." << std::endl;
         return false;
     }
 
-    // --- REAL FIRESTORE ADMIN SDK DATA INSERTION WOULD GO HERE ---
-    // Example (conceptual):
-    // std::map<std::string, firebase::firestore::FieldValue> doc_data;
-    // doc_data["predefined_name"] = firebase::firestore::FieldValue::String(data.predefined_name);
-    // doc_data["temperature"] = firebase::firestore::FieldValue::Double(data.temperature);
-    // doc_data["humidity"] = firebase::firestore::FieldValue::Double(data.humidity);
-    // doc_data["rssi"] = firebase::firestore::FieldValue::Integer(data.rssi);
-    // doc_data["timestamp"] = firebase::firestore::FieldValue::ServerTimestamp(); // Or use data.timestamp converted to Firebase timestamp
+    // Prepare data for Firestore document using firebase::firestore::MapFieldValue
+    firebase::firestore::MapFieldValue doc_data;
+    doc_data["predefined_name"] = firebase::firestore::FieldValue::String(data.predefined_name);
+    doc_data["temperature"] = firebase::firestore::FieldValue::Double(data.temperature);
+    doc_data["humidity"] = firebase::firestore::FieldValue::Double(data.humidity);
+    doc_data["rssi"] = firebase::firestore::FieldValue::Integer(data.rssi);
 
-    // // Generate a document ID (e.g., based on timestamp or MAC + timestamp)
-    // std::string doc_id = data.mac_address + "_" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(data.timestamp.time_since_epoch()).count());
-    //
-    // db_->Collection("sensor_readings").Document(doc_id).Set(doc_data)
-    //     .OnCompletion([](const firebase::Future<void>& future) {
-    //         if (future.error() == firebase::firestore::Error::kOk) {
-    //             // std::cout << "Data successfully written to Firestore!" << std::endl;
-    //         } else {
-    //             std::cerr << "Error writing to Firestore: " << future.error_message() << std::endl;
-    //         }
-    //     });
+    // Convert std::chrono::system_clock::time_point to Firebase Timestamp
+    // Firebase Timestamp uses microseconds since epoch
+    auto epoch = data.timestamp.time_since_epoch();
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(epoch);
+    auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch - seconds);
 
-    // Simulate success
-    // std::cout << "Simulated: Inserted data for " << data.predefined_name << " to Firestore." << std::endl;
-    return true;
+    // Corrected: firebase::Timestamp directly, not firebase::firestore::Timestamp
+    firebase::Timestamp firebase_timestamp(seconds.count(), nanoseconds.count());
+    doc_data["timestamp"] = firebase::firestore::FieldValue::Timestamp(firebase_timestamp);
+
+    // Generate a document ID (e.g., based on predefined name and timestamp for uniqueness)
+    std::string doc_id = data.predefined_name + "_" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(data.timestamp.time_since_epoch()).count());
+
+    // Add data to a new document in the "sensor_readings" collection
+    firebase::Future<void> future = db_->Collection("sensor_readings").Document(doc_id).Set(doc_data);
+
+    // Wait for the operation to complete using a loop (more robust if .Wait() is problematic)
+    // In a real application, you might use an asynchronous callback or a more sophisticated
+    // blocking mechanism depending on your threading model.
+    while (future.status() == firebase::kFutureStatusPending) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Small delay to avoid busy-waiting
+    }
+
+    // Corrected: Use firebase::firestore::kErrorNone for success check
+    if (future.error() == firebase::firestore::kErrorNone) {
+        // std::cout << "Data successfully written to Firestore for " << data.predefined_name << std::endl;
+        return true;
+    } else {
+        std::cerr << "Error writing to Firestore for " << data.predefined_name << ": "
+                  << future.error_message() << " (Error Code: " << future.error() << ")" << std::endl;
+        return false;
+    }
 }
 
 /**
- * @brief Simulates checking if the Firestore connection is currently "online".
- * In a real application, this would involve network checks or SDK status.
- * @return True if online, false otherwise.
+ * @brief Checks if the Firestore manager is initialized and conceptually "online".
+ * This is a simple check for initialization; real network connectivity
+ * would require more sophisticated checks.
+ * @return True if initialized and considered online, false otherwise.
  */
 bool FirestoreManager::isOnline() const {
-    // In a real application, this would be more sophisticated:
-    // - Check network connectivity (ping a known server, check system network status).
-    // - Check Firebase SDK's internal connection status if exposed.
-    // - Potentially attempt a lightweight Firestore operation (e.g., get a dummy document)
-    //   and catch errors.
-    return simulated_online_status_.load();
+    // In a real application, you might add network reachability checks here.
+    // For now, it simply reflects if the SDK was successfully initialized.
+    return is_initialized_.load() && simulated_online_status_.load(); // Use .load()
 }
 
 /**
- * @brief Shuts down the conceptual Firestore connection.
+ * @brief Shuts down the Firebase App and Firestore client.
  */
 void FirestoreManager::shutdown() {
-    if (is_initialized_) {
-        std::cout << "Shutting down conceptual Firestore." << std::endl;
-        // --- REAL FIREBASE ADMIN SDK SHUTDOWN WOULD GO HERE ---
-        // if (db_) {
-        //     delete db_;
-        //     db_ = nullptr;
-        // }
-        // if (app_) {
-        //     delete app_;
-        //     app_ = nullptr;
-        // }
-        is_initialized_ = false;
+    if (db_) {
+        // Firestore instance is managed by the App, no explicit delete needed for db_
+        db_ = nullptr; // Just clear the pointer
     }
+    if (app_) {
+        std::cout << "Shutting down Firebase App." << std::endl;
+        delete app_; // Corrected: Use delete on the pointer
+        app_ = nullptr;
+    }
+    is_initialized_.store(false); // Use .store()
+    simulated_online_status_.store(false);
 }
 
 /**

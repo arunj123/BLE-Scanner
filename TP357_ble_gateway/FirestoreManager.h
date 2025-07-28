@@ -5,22 +5,18 @@
 #include "IFirestoreManager.h"
 #include <string>
 #include <atomic>
-#include <chrono> // For simulating online/offline status
+#include <unordered_map> // Required for firebase::firestore::MapFieldValue
 
-// Forward declarations for Firebase Admin SDK types (conceptual)
-// namespace firebase {
-// namespace app {
-// class App;
-// } // namespace app
-// namespace firestore {
-// class Firestore;
-// } // namespace firestore
-// } // namespace firebase
+// Include Firebase Admin SDK headers
+#include "firebase/app.h"           // firebase::App and firebase::AppOptions are defined here
+#include "firebase/firestore.h"
+#include "firebase/firestore/timestamp.h" // Explicitly include for firebase::Timestamp
+#include "firebase/future.h"        // For firebase::Future (firebase::kErrorNone is often here)
+
 
 /**
- * @brief Conceptual implementation of IFirestoreManager for Firebase Firestore.
- * This class simulates Firestore operations for demonstration purposes.
- * In a real application, this would integrate with the Firebase Admin SDK for C++.
+ * @brief Concrete implementation of IFirestoreManager for Firebase Firestore.
+ * This class integrates with the Firebase Admin SDK for C++.
  */
 class FirestoreManager : public IFirestoreManager {
 public:
@@ -30,50 +26,49 @@ public:
     FirestoreManager();
 
     /**
-     * @brief Destroys the FirestoreManager.
+     * @brief Destroys the FirestoreManager, ensuring Firebase resources are cleaned up.
      */
     ~FirestoreManager();
 
     /**
-     * @brief Initializes the conceptual Firestore connection.
-     * In a real SDK, this would load credentials and initialize the Firebase App.
-     * @param config_path Path to the Firebase service account key JSON file or other configuration.
+     * @brief Initializes the Firebase App and Firestore client.
+     * @param config_path Path to the Firebase service account key JSON file.
      * @return True on success, false on failure.
      */
     bool initialize(const std::string& config_path) override;
 
     /**
-     * @brief Inserts a SensorData object into conceptual Firestore.
-     * This method simulates success or failure based on the 'online' status.
+     * @brief Inserts a SensorData object into Firestore.
      * @param data The SensorData object to insert.
      * @return True on successful insertion, false on failure.
      */
     bool insertSensorData(const SensorData& data) override;
 
     /**
-     * @brief Simulates checking if the Firestore connection is currently "online".
-     * In a real application, this would involve network checks or SDK status.
-     * @return True if online, false otherwise.
+     * @brief Checks if the Firestore manager is initialized and conceptually "online".
+     * This is a simple check for initialization; real network connectivity
+     * would require more sophisticated checks.
+     * @return True if initialized and considered online, false otherwise.
      */
     bool isOnline() const override;
 
     /**
-     * @brief Shuts down the conceptual Firestore connection.
+     * @brief Shuts down the Firebase App and Firestore client.
      */
     void shutdown() override;
 
     /**
      * @brief Sets the simulated online status.
+     * This is primarily for testing fallback logic when a real network check isn't feasible.
      * @param online True to set online, false to set offline.
      */
     void setSimulatedOnlineStatus(bool online);
 
 private:
-    // firebase::app::App* app_; // Conceptual Firebase App instance
-    // firebase::firestore::Firestore* db_; // Conceptual Firestore client instance
+    firebase::App* app_;             ///< Firebase App instance
+    firebase::firestore::Firestore* db_;  ///< Firestore client instance
     std::atomic<bool> simulated_online_status_; ///< Flag to simulate online/offline state
-    std::string config_path_; ///< Stores the config path for demonstration
-    bool is_initialized_; ///< Flag to track initialization status
+    std::atomic<bool> is_initialized_;    ///< Flag to track successful Firebase initialization (made atomic)
 };
 
 #endif // FIRESTORE_MANAGER_H
