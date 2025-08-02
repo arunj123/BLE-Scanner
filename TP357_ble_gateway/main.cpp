@@ -41,8 +41,8 @@ int main(int argc, char **argv) {
         std::cerr << "Could not load .env file. Using default settings." << std::endl;
     }
 
-    // Get logging window duration from .env or use a default (e.g., 5 seconds)
-    int logging_window_seconds = std::stoi(env_reader.getOrDefault("LOGGING_WINDOW_SECONDS", "2")); // Keep it short for debugging
+    // Get logging window duration from .env or use a default (e.g., 20 seconds)
+    int logging_window_seconds = std::stoi(env_reader.getOrDefault("LOGGING_WINDOW_SECONDS", "20")); // Changed to 20s
     std::cout << "Configured logging window: " << logging_window_seconds << " seconds." << std::endl;
 
     // Create the message queue
@@ -77,6 +77,8 @@ int main(int argc, char **argv) {
 
     // Create and initialize the SQLite database manager
     auto sqlite_db_manager = std::make_unique<SQLiteDatabaseManager>();
+    // Note: The database file will now contain the 'sensor_readings_aggregated' table.
+    // If you want to clear old 'sensor_readings' table, you might need to delete the .db file manually.
     if (!sqlite_db_manager->initialize("sensor_readings.db")) {
         std::cerr << "Failed to initialize SQLite database. Exiting." << std::endl;
         scanner.stopScan(); // Ensure scanner is stopped if DB init fails

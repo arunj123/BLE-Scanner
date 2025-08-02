@@ -1,130 +1,122 @@
 // SQLiteDatabaseManager.cpp
 #include "SQLiteDatabaseManager.h"
 #include <iostream>
-#include <ctime>     // For std::time_t and std::gmtime
-#include <iomanip>   // For std::put_time
-#include <sstream>   // For std::stringstream
+#include <cstdio> // For remove()
 
-SQLiteDatabaseManager::SQLiteDatabaseManager() : db_(nullptr), is_initialized_(false) {}
+SQLiteDatabaseManager::SQLiteDatabaseManager() : db_(nullptr) {
+    // Constructor: db_ is initialized to nullptr.
+}
 
 SQLiteDatabaseManager::~SQLiteDatabaseManager() {
-    shutdown(); // Ensure database is closed on destruction
+    shutdown(); // Ensure database is closed on destruction.
 }
 
 /**
- * @brief Initializes the SQLite database. Opens the database file and creates the table if it doesn't exist.
- * @param db_path The file path for the SQLite database.
+ * @brief Initializes the SQLite database connection and creates the necessary table.
+ * This version creates a table for aggregated binary sensor data.
+ * @param db_path The path to the SQLite database file.
  * @return True on success, false on failure.
  */
 bool SQLiteDatabaseManager::initialize(const std::string& db_path) {
-    if (is_initialized_) {
-        std::cerr << "Database already initialized." << std::endl;
-        return false;
-    }
-
     // Open the database connection
     int rc = sqlite3_open(db_path.c_str(), &db_);
     if (rc) {
-        std::cerr << "Can't open database: " << sqlite3_errmsg(db_) << std::endl;
+        std::cerr << "Cannot open database: " << sqlite3_errmsg(db_) << std::endl;
+        db_ = nullptr; // Ensure db_ is nullptr if open fails
         return false;
-    } else {
-        std::cout << "Opened database successfully: " << db_path << std::endl;
     }
+    std::cout << "Opened database successfully: " << db_path << std::endl;
 
-    // SQL statement to create the table if it does not exist
-    // MAC_ADDRESS and DECODED_DEVICE_NAME columns are removed.
-    const char* sql = "CREATE TABLE IF NOT EXISTS sensor_readings ("
-                      "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
-                      "PREDEFINED_NAME TEXT," // Only predefined name
-                      "TEMPERATURE REAL,"
-                      "HUMIDITY REAL,"
-                      "RSSI INTEGER,"
-                      "TIMESTAMP TEXT NOT NULL);";
+    // SQL statement to create the aggregated sensor_readings table
+    // It will store a timestamp and a BLOB (binary large object) of aggregated data.
+    const char* sql_create_table =
+        "CREATE TABLE IF NOT EXISTS sensor_readings_aggregated ("
+        "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "TIMESTAMP TEXT NOT NULL,"
+        "DATA BLOB"
+        ");";
 
-    char *zErrMsg = 0;
-    rc = sqlite3_exec(db_, sql, 0, 0, &zErrMsg); // Execute the SQL statement
+    char* err_msg = nullptr;
+    rc = sqlite3_exec(db_, sql_create_table, 0, 0, &err_msg);
     if (rc != SQLITE_OK) {
-        std::cerr << "SQL error creating table: " << zErrMsg << std::endl;
-        sqlite3_free(zErrMsg); // Free the error message memory
-        sqlite3_close(db_);    // Close the database on error
-        db_ = nullptr;
+        std::cerr << "SQL error creating table: " << err_msg << std::endl;
+        sqlite3_free(err_msg);
+        sqlite3_close(db_);
+        db_ = nullptr; // Ensure db_ is nullptr if table creation fails
         return false;
-    } else {
-        std::cout << "Table 'sensor_readings' created successfully or already exists." << std::endl;
     }
+    std::cout << "Table 'sensor_readings_aggregated' created successfully or already exists." << std::endl;
 
-    is_initialized_ = true;
     return true;
 }
 
 /**
- * @brief Inserts a SensorData object into the SQLite database.
- * This implementation will NOT store MAC_ADDRESS or DECODED_DEVICE_NAME.
+ * @brief Inserts a single SensorData object into the database.
+ * This method is deprecated and no longer used by DataProcessor for windowed logging.
  * @param data The SensorData object to insert.
  * @return True on successful insertion, false on failure.
  */
 bool SQLiteDatabaseManager::insertSensorData(const SensorData& data) {
-    if (!is_initialized_ || !db_) {
-        std::cerr << "Database not initialized or connection is null." << std::endl;
+    // This method is deprecated for the new logging strategy.
+    // It will still work if called directly, but DataProcessor now calls insertAggregatedSensorData.
+    std::cerr << "Warning: insertSensorData is deprecated and should not be called for windowed logging." << std::endl;
+    return false; // Indicate failure as it's not the intended path
+}
+
+/**
+ * @brief Inserts aggregated sensor data (binary blob) into the database.
+ * This method is intended for saving data from multiple sensors within a single time window.
+ * @param timestamp_str The timestamp string for the aggregated data.
+ * @param binary_data A vector of characters representing the serialized binary data.
+ * @return True on successful insertion, false on failure.
+ */
+bool SQLiteDatabaseManager::insertAggregatedSensorData(const std::string& timestamp_str, const std::vector<char>& binary_data) {
+    if (!db_) {
+        std::cerr << "Database not open. Cannot insert aggregated data." << std::endl;
         return false;
     }
 
-    sqlite3_stmt *stmt; // Prepared statement object
-    int rc;
+    const char* sql_insert =
+        "INSERT INTO sensor_readings_aggregated (TIMESTAMP, DATA) VALUES (?, ?);";
 
-    // Convert std::chrono::system_clock::time_point to a human-readable string (ISO 8601 format)
-    std::time_t tt = std::chrono::system_clock::to_time_t(data.timestamp);
-    std::tm tm_buf;
-    // Use platform-specific safe version of gmtime
-    #ifdef _WIN32
-    gmtime_s(&tm_buf, &tt); // For Windows
-    #else
-    gmtime_r(&tt, &tm_buf); // For POSIX systems (Linux, macOS)
-    #endif
-    std::stringstream ss;
-    ss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%SZ"); // Format as YYYY-MM-DDTHH:MM:SSZ
-
-    // SQL INSERT statement with placeholders, excluding MAC_ADDRESS and DECODED_DEVICE_NAME
-    std::string sql = "INSERT INTO sensor_readings (PREDEFINED_NAME, TEMPERATURE, HUMIDITY, RSSI, TIMESTAMP) "
-                      "VALUES (?, ?, ?, ?, ?);";
-
-    // Prepare the SQL statement
-    rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, 0);
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db_, sql_insert, -1, &stmt, 0);
     if (rc != SQLITE_OK) {
-        std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db_) << std::endl;
+        std::cerr << "Failed to prepare statement for aggregated data: " << sqlite3_errmsg(db_) << std::endl;
         return false;
     }
 
-    // Bind values to the placeholders
-    // Note: MAC_ADDRESS and DECODED_DEVICE_NAME are intentionally not bound here
-    // If predefined_name is empty, bind NULL to the database column
-    sqlite3_bind_text(stmt, 1, data.predefined_name.empty() ? nullptr : data.predefined_name.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_double(stmt, 2, data.temperature);
-    sqlite3_bind_double(stmt, 3, data.humidity);
-    sqlite3_bind_int(stmt, 4, data.rssi);
-    sqlite3_bind_text(stmt, 5, ss.str().c_str(), -1, SQLITE_TRANSIENT);
+    // Bind timestamp
+    sqlite3_bind_text(stmt, 1, timestamp_str.c_str(), -1, SQLITE_TRANSIENT);
 
-    // Execute the prepared statement
+    // Bind binary data (BLOB)
+    // Use SQLITE_STATIC to indicate that the data is owned by the caller and will not change
+    // during the lifetime of the statement. The vector's data() pointer is valid until the vector is destroyed.
+    sqlite3_bind_blob(stmt, 2, binary_data.data(), static_cast<int>(binary_data.size()), SQLITE_TRANSIENT);
+
     rc = sqlite3_step(stmt);
-    if (rc != SQLITE_DONE) { // SQLITE_DONE indicates successful completion for INSERT, UPDATE, DELETE
-        std::cerr << "Failed to execute statement: " << sqlite3_errmsg(db_) << std::endl;
-        sqlite3_finalize(stmt); // Finalize the statement on error
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Failed to execute statement for aggregated data: " << sqlite3_errmsg(db_) << std::endl;
+        sqlite3_finalize(stmt);
         return false;
     }
 
-    sqlite3_finalize(stmt); // Finalize the statement
-    std::cout << "Successfully inserted data for " << data.predefined_name << " into SQLite." << std::endl;
+    sqlite3_finalize(stmt);
+    std::cout << "Successfully inserted aggregated data into SQLite for timestamp: " << timestamp_str << std::endl;
     return true;
 }
 
 /**
- * @brief Shuts down the SQLite database connection.
+ * @brief Shuts down the database connection.
  */
 void SQLiteDatabaseManager::shutdown() {
     if (db_) {
-        sqlite3_close(db_); // Close the database connection
+        int rc = sqlite3_close(db_);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Error closing database: " << sqlite3_errmsg(db_) << std::endl;
+        } else {
+            std::cout << "Database closed." << std::endl;
+        }
         db_ = nullptr;
-        is_initialized_ = false;
-        std::cout << "Database closed." << std::endl;
     }
 }

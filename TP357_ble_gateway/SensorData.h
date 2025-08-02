@@ -4,36 +4,30 @@
 
 #include <string>
 #include <chrono> // For std::chrono::system_clock::time_point
+#include <cstdint> // For int8_t
 
 /**
- * @brief Structure to hold parsed sensor data along with a timestamp.
+ * @brief Structure to hold parsed sensor data.
  */
 struct SensorData {
-    std::string mac_address;              ///< MAC address of the Bluetooth device
-    std::string predefined_name;          ///< Custom predefined name for the device
-    std::string decoded_device_name;      ///< Device name decoded from advertising data
-    double temperature;                   ///< Temperature reading
-    double humidity;                      ///< Humidity reading
-    int8_t rssi;                         ///< Received Signal Strength Indicator
-    std::chrono::system_clock::time_point timestamp; ///< Timestamp of when the packet was received
+    std::string mac_address;        ///< MAC address of the device
+    std::string predefined_name;    ///< User-defined name for the device (e.g., "Living Room Sensor")
+    std::string decoded_device_name;///< Device name decoded from advertising data (e.g., "TP357 (E4F0)")
+    double temperature;             ///< Temperature reading in Celsius
+    double humidity;                ///< Humidity reading in percentage
+    int8_t rssi;                    ///< RSSI (Received Signal Strength Indicator)
+    std::chrono::system_clock::time_point timestamp; ///< Timestamp of when the data was received
+
+    // Default constructor for use with std::optional and dummy queue signals
+    SensorData() : temperature(0.0), humidity(0.0), rssi(0), timestamp(std::chrono::system_clock::now()) {}
 
     /**
-     * @brief Constructor for SensorData.
-     * @param mac MAC address.
-     * @param pre_name Predefined name.
-     * @param dec_name Decoded device name.
-     * @param temp Temperature.
-     * @param hum Humidity.
-     * @param r RSSI.
-     * @param ts Timestamp.
+     * @brief Constructs a SensorData object with provided values.
      */
-    SensorData(const std::string& mac, const std::string& pre_name, const std::string& dec_name,
+    SensorData(const std::string& mac, const std::string& p_name, const std::string& d_name,
                double temp, double hum, int8_t r, std::chrono::system_clock::time_point ts)
-        : mac_address(mac), predefined_name(pre_name), decoded_device_name(dec_name),
+        : mac_address(mac), predefined_name(p_name), decoded_device_name(d_name),
           temperature(temp), humidity(hum), rssi(r), timestamp(ts) {}
-
-    // Default constructor needed for std::optional and queue operations
-    SensorData() : temperature(-999.0), humidity(-999.0), rssi(0) {}
 };
 
 #endif // SENSOR_DATA_H

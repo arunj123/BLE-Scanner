@@ -5,16 +5,19 @@
 // Ensure all types used in the header are fully defined
 #include "MessageQueue.h"     // MessageQueue is used by value/reference
 #include "IDatabaseManager.h" // IDatabaseManager is used by unique_ptr
+#include "SensorData.h"       // SensorData is used in the map
 
 #include <thread>
 #include <atomic>
 #include <memory> // For std::unique_ptr
-#include <optional> // For std::optional<SensorData>
+#include <optional> // For std::optional (though now used for pop return)
 #include <chrono>   // For std::chrono::steady_clock and std::chrono::seconds
+#include <map>      // For std::map to store latest samples per sensor
+#include <string>   // For map keys
 
 /**
- * @brief Consumes SensorData from a MessageQueue and inserts the latest sample
- * within a configured time window into a database.
+ * @brief Consumes SensorData from a MessageQueue, aggregates the latest samples
+ * within a configured time window, and inserts the aggregated binary data into a database.
  * This class runs its processing loop in a separate thread.
  */
 class DataProcessor {
@@ -50,13 +53,28 @@ private:
      */
     void processingLoop();
 
+    /**
+     * @brief Helper function to serialize the map of SensorData into a binary vector.
+     * @param data_map The map containing SensorData to serialize.
+     * @return A vector of characters representing the binary data.
+     */
+    std::vector<char> serializeSensorDataMap(const std::map<std::string, SensorData>& data_map);
+
+    /**
+     * @brief Helper function to format a std::chrono::system_clock::time_point to a string.
+     * @param tp The time_point to format.
+     * @return A formatted string (e.g., "YYYY-MM-DDTHH:MM:SSZ").
+     */
+    std::string formatTimestamp(std::chrono::system_clock::time_point tp);
+
+
     MessageQueue& queue_;                        ///< Reference to the message queue
     std::unique_ptr<IDatabaseManager> sqlite_db_manager_; ///< Pointer to the SQLite database manager
     std::atomic<bool> keep_running_;             ///< Flag to control the processing loop
     std::thread processing_thread_;              ///< The thread running the processing loop
 
-    std::optional<SensorData> latest_sample_in_window_; ///< Stores the latest sample received in the current window
-    std::mutex latest_sample_mutex_;                   ///< Mutex to protect access to latest_sample_in_window_
+    std::map<std::string, SensorData> latest_samples_in_window_; ///< Stores the latest sample for each sensor in the current window (keyed by MAC address)
+    std::mutex latest_samples_mutex_;                   ///< Mutex to protect access to latest_samples_in_window_
 
     std::chrono::steady_clock::time_point window_start_time_; ///< Timestamp when the current logging window started
     std::chrono::seconds logging_window_duration_;             ///< The configured duration of the logging window
