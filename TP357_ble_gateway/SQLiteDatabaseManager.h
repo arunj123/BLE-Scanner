@@ -5,7 +5,10 @@
 #include "IDatabaseManager.h" // Inherits from IDatabaseManager
 #include <sqlite3.h>          // SQLite C API
 #include <string>
-#include <vector>
+#include <vector> // For binary data
+
+// spdlog include
+#include "spdlog/spdlog.h"
 
 /**
  * @brief Concrete implementation of IDatabaseManager for SQLite.
@@ -33,7 +36,7 @@ public:
      * @brief Inserts a single SensorData object into the database.
      * @param data The SensorData object to insert.
      * @return True on successful insertion, false on failure.
-     * @deprecated This method is no longer used by DataProcessor for windowed logging.
+     * @deprecated This method is being replaced by insertAggregatedSensorData for windowed logging.
      */
     bool insertSensorData(const SensorData& data) override;
 

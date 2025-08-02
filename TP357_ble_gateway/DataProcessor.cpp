@@ -25,7 +25,7 @@ DataProcessor::DataProcessor(MessageQueue& queue,
       sqlite_db_manager_(std::move(sqlite_db_manager)),
       keep_running_(true), // This is initialized to true
       logging_window_duration_(logging_window_seconds) {
-    // Constructor initializes members. Thread is started by startProcessing().
+    // Constructor initializes members. Thread is started by startConsuming().
     // window_start_time_ is initialized in processingLoop.
 }
 
@@ -33,13 +33,13 @@ DataProcessor::DataProcessor(MessageQueue& queue,
  * @brief Destroys the DataProcessor, ensuring the processing thread is stopped.
  */
 DataProcessor::~DataProcessor() {
-    stopProcessing(); // Ensure the thread is joined before destruction
+    stopConsuming(); // Ensure the thread is joined before destruction
 }
 
 /**
- * @brief Starts the data processing loop in a new thread.
+ * @brief Starts the data consumption process. (Implementation of IDataConsumer)
  */
-void DataProcessor::startProcessing() {
+void DataProcessor::startConsuming() {
     if (processing_thread_.joinable()) {
         spdlog::get("DataProcessor")->error("DataProcessor already running.");
         return;
@@ -60,9 +60,9 @@ void DataProcessor::startProcessing() {
 }
 
 /**
- * @brief Signals the processing loop to stop and joins the thread.
+ * @brief Signals the data consumption process to stop and waits for its completion. (Implementation of IDataConsumer)
  */
-void DataProcessor::stopProcessing() {
+void DataProcessor::stopConsuming() {
     if (processing_thread_.joinable()) {
         keep_running_.store(false); // Signal the loop to stop
         // Push a dummy item to unblock the queue if the processingLoop is currently

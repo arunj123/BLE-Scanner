@@ -5,8 +5,9 @@
 #include <map>      // For std::map to track connected iTags
 #include <mutex>    // For std::mutex to protect shared resources
 #include <memory>   // For std::unique_ptr
-#include <cstdint>  // For uint64_t (though not directly used for thread ID now)
+#include <cstdint>  // For uint64_t
 #include <sstream>  // For std::ostringstream
+#include <vector>   // For std::vector to manage multiple consumers
 
 // spdlog includes
 #include "spdlog/spdlog.h"
@@ -17,20 +18,27 @@
 #include "SQLiteDatabaseManager.h" // Provides full definition of SQLiteDatabaseManager
 #include "DataProcessor.h"         // Provides full definition of DataProcessor
 #include "EnvReader.h"             // Provides full definition of EnvReader
-
 #include "BluetoothScanner.h"      // Include the BluetoothScanner class
+#include "IDataConsumer.h"         // New: Interface for data consumers
 
 // Global pointers for graceful shutdown
 BluetoothScanner* g_scanner_ptr = nullptr;
-DataProcessor* g_data_processor_ptr = nullptr;
+// Changed to a vector to manage multiple consumers
+std::vector<IDataConsumer*> g_consumers_ptrs;
+std::mutex g_consumers_mutex; // Mutex to protect access to g_consumers_ptrs
 
 // Signal handler function to gracefully terminate the program
 void signal_handler(int signum) {
     spdlog::get("Main")->info("SIGINT received. Initiating graceful shutdown...");
-    // Stop data processor first, as it relies on the queue
-    if (g_data_processor_ptr) {
-        g_data_processor_ptr->stopProcessing();
+
+    // Stop all registered consumers first
+    std::lock_guard<std::mutex> lock(g_consumers_mutex);
+    for (IDataConsumer* consumer : g_consumers_ptrs) {
+        if (consumer) {
+            consumer->stopConsuming();
+        }
     }
+
     // Then tell the scanner thread to stop
     if (g_scanner_ptr) {
         g_scanner_ptr->stopScan();
@@ -56,7 +64,7 @@ int main(int argc, char **argv) {
         spdlog::create<spdlog::sinks::stdout_color_sink_mt>("BluetoothScanner");
         spdlog::create<spdlog::sinks::stdout_color_sink_mt>("TP357Handler");
         spdlog::create<spdlog::sinks::stdout_color_sink_mt>("MessageQueue");
-        spdlog::create<spdlog::sinks::stdout_color_sink_mt>("DataProcessor");
+        spdlog::create<spdlog::sinks::stdout_color_sink_mt>("DataProcessor"); // Renamed from DataProcessor Loop
         spdlog::create<spdlog::sinks::stdout_color_sink_mt>("SQLiteDatabaseManager");
         spdlog::create<spdlog::sinks::stdout_color_sink_mt>("EnvReader");
 
@@ -78,7 +86,7 @@ int main(int argc, char **argv) {
     }
 
     // Get logging window duration from .env or use a default (e.g., 20 seconds)
-    int logging_window_seconds = std::stoi(env_reader.getOrDefault("LOGGING_WINDOW_SECONDS", "20")); // Changed to 20s
+    int logging_window_seconds = std::stoi(env_reader.getOrDefault("LOGGING_WINDOW_SECONDS", "20"));
     spdlog::get("Main")->info("Configured logging window: {} seconds.", logging_window_seconds);
 
     // Create the message queue
@@ -111,23 +119,39 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // --- Data Consumers Setup ---
+    std::vector<std::unique_ptr<IDataConsumer>> consumers;
+
     // Create and initialize the SQLite database manager
     auto sqlite_db_manager = std::make_unique<SQLiteDatabaseManager>();
-    // Note: The database file will now contain the 'sensor_readings_aggregated' table.
-    // If you want to clear old 'sensor_readings' table, you might need to delete the .db file manually.
     if (!sqlite_db_manager->initialize("sensor_readings.db")) {
         spdlog::get("SQLiteDatabaseManager")->error("Failed to initialize SQLite database. Exiting.");
         scanner.stopScan(); // Ensure scanner is stopped if DB init fails
         return 1;
     }
 
-    // --- Start DataProcessor BEFORE Scanner ---
-    spdlog::get("Main")->info("Attempting to start DataProcessor...");
-    DataProcessor data_processor(sensor_data_queue, std::move(sqlite_db_manager), logging_window_seconds);
-    g_data_processor_ptr = &data_processor; // Assign global data processor pointer
-    data_processor.startProcessing();
-    spdlog::get("Main")->info("DataProcessor start attempt complete.");
-    // --- End DataProcessor Start ---
+    // Create the DataProcessor instance (now an IDataConsumer)
+    // Pass the message queue and the database manager to it
+    consumers.push_back(std::make_unique<DataProcessor>(sensor_data_queue, std::move(sqlite_db_manager), logging_window_seconds));
+
+    // Add other consumers here if needed, e.g.:
+    // consumers.push_back(std::make_unique<AnotherConsumer>(sensor_data_queue, other_dependency));
+
+    // Register consumers for global shutdown
+    {
+        std::lock_guard<std::mutex> lock(g_consumers_mutex);
+        for (const auto& consumer_ptr : consumers) {
+            g_consumers_ptrs.push_back(consumer_ptr.get());
+        }
+    }
+
+    // Start all data consumers
+    spdlog::get("Main")->info("Attempting to start data consumers...");
+    for (const auto& consumer_ptr : consumers) {
+        consumer_ptr->startConsuming();
+    }
+    spdlog::get("Main")->info("Data consumers start attempt complete.");
+    // --- End Data Consumers Setup ---
 
 
     // Start the scanning loop in a separate thread
@@ -140,8 +164,19 @@ int main(int argc, char **argv) {
     // (which happens when Ctrl+C is pressed and stopScan() is called).
     scanner_thread.join();
 
-    // Ensure data processor also finishes after scanner, if not already stopped by signal handler
-    data_processor.stopProcessing();
+    // Ensure all data consumers also finish after scanner, if not already stopped by signal handler
+    // This loop is a fallback, as signal_handler should have already called stopConsuming.
+    spdlog::get("Main")->info("Ensuring all data consumers are stopped...");
+    {
+        std::lock_guard<std::mutex> lock(g_consumers_mutex); // Lock to prevent race with signal handler
+        for (IDataConsumer* consumer : g_consumers_ptrs) {
+            if (consumer) {
+                consumer->stopConsuming(); // Calling stopConsuming again is safe (checks joinable)
+            }
+        }
+        g_consumers_ptrs.clear(); // Clear the global list
+    }
+
 
     spdlog::get("Main")->info("Main thread exiting.");
     return 0;

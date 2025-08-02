@@ -6,6 +6,7 @@
 #include "MessageQueue.h"     // MessageQueue is used by value/reference
 #include "IDatabaseManager.h" // IDatabaseManager is used by unique_ptr
 #include "SensorData.h"       // SensorData is used in the map
+#include "IDataConsumer.h"    // New: Inherit from IDataConsumer
 
 #include <thread>
 #include <atomic>
@@ -23,7 +24,7 @@
  * within a configured time window, and inserts the aggregated binary data into a database.
  * This class runs its processing loop in a separate thread.
  */
-class DataProcessor {
+class DataProcessor : public IDataConsumer { // Inherit from IDataConsumer
 public:
     /**
      * @brief Constructs a DataProcessor.
@@ -41,14 +42,14 @@ public:
     ~DataProcessor();
 
     /**
-     * @brief Starts the data processing loop in a new thread.
+     * @brief Starts the data consumption process. (Implementation of IDataConsumer)
      */
-    void startProcessing();
+    void startConsuming() override;
 
     /**
-     * @brief Signals the processing loop to stop and joins the thread.
+     * @brief Signals the data consumption process to stop and waits for its completion. (Implementation of IDataConsumer)
      */
-    void stopProcessing();
+    void stopConsuming() override;
 
 private:
     /**

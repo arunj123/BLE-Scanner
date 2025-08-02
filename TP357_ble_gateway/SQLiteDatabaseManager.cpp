@@ -3,6 +3,9 @@
 #include <iostream>
 #include <cstdio> // For remove()
 
+// spdlog include
+#include "spdlog/spdlog.h"
+
 SQLiteDatabaseManager::SQLiteDatabaseManager() : db_(nullptr) {
     // Constructor: db_ is initialized to nullptr.
 }
@@ -21,11 +24,11 @@ bool SQLiteDatabaseManager::initialize(const std::string& db_path) {
     // Open the database connection
     int rc = sqlite3_open(db_path.c_str(), &db_);
     if (rc) {
-        std::cerr << "Cannot open database: " << sqlite3_errmsg(db_) << std::endl;
+        spdlog::get("SQLiteDatabaseManager")->error("Cannot open database: {}", sqlite3_errmsg(db_));
         db_ = nullptr; // Ensure db_ is nullptr if open fails
         return false;
     }
-    std::cout << "Opened database successfully: " << db_path << std::endl;
+    spdlog::get("SQLiteDatabaseManager")->info("Opened database successfully: {}", db_path);
 
     // SQL statement to create the aggregated sensor_readings table
     // It will store a timestamp and a BLOB (binary large object) of aggregated data.
@@ -39,13 +42,13 @@ bool SQLiteDatabaseManager::initialize(const std::string& db_path) {
     char* err_msg = nullptr;
     rc = sqlite3_exec(db_, sql_create_table, 0, 0, &err_msg);
     if (rc != SQLITE_OK) {
-        std::cerr << "SQL error creating table: " << err_msg << std::endl;
+        spdlog::get("SQLiteDatabaseManager")->error("SQL error creating table: {}", err_msg);
         sqlite3_free(err_msg);
         sqlite3_close(db_);
         db_ = nullptr; // Ensure db_ is nullptr if table creation fails
         return false;
     }
-    std::cout << "Table 'sensor_readings_aggregated' created successfully or already exists." << std::endl;
+    spdlog::get("SQLiteDatabaseManager")->info("Table 'sensor_readings_aggregated' created successfully or already exists.");
 
     return true;
 }
@@ -59,7 +62,7 @@ bool SQLiteDatabaseManager::initialize(const std::string& db_path) {
 bool SQLiteDatabaseManager::insertSensorData(const SensorData& data) {
     // This method is deprecated for the new logging strategy.
     // It will still work if called directly, but DataProcessor now calls insertAggregatedSensorData.
-    std::cerr << "Warning: insertSensorData is deprecated and should not be called for windowed logging." << std::endl;
+    spdlog::get("SQLiteDatabaseManager")->warn("Warning: insertSensorData is deprecated and should not be called for windowed logging.");
     return false; // Indicate failure as it's not the intended path
 }
 
@@ -72,7 +75,7 @@ bool SQLiteDatabaseManager::insertSensorData(const SensorData& data) {
  */
 bool SQLiteDatabaseManager::insertAggregatedSensorData(const std::string& timestamp_str, const std::vector<char>& binary_data) {
     if (!db_) {
-        std::cerr << "Database not open. Cannot insert aggregated data." << std::endl;
+        spdlog::get("SQLiteDatabaseManager")->error("Database not open. Cannot insert aggregated data.");
         return false;
     }
 
@@ -82,7 +85,7 @@ bool SQLiteDatabaseManager::insertAggregatedSensorData(const std::string& timest
     sqlite3_stmt* stmt;
     int rc = sqlite3_prepare_v2(db_, sql_insert, -1, &stmt, 0);
     if (rc != SQLITE_OK) {
-        std::cerr << "Failed to prepare statement for aggregated data: " << sqlite3_errmsg(db_) << std::endl;
+        spdlog::get("SQLiteDatabaseManager")->error("Failed to prepare statement for aggregated data: {}", sqlite3_errmsg(db_));
         return false;
     }
 
@@ -90,19 +93,19 @@ bool SQLiteDatabaseManager::insertAggregatedSensorData(const std::string& timest
     sqlite3_bind_text(stmt, 1, timestamp_str.c_str(), -1, SQLITE_TRANSIENT);
 
     // Bind binary data (BLOB)
-    // Use SQLITE_STATIC to indicate that the data is owned by the caller and will not change
-    // during the lifetime of the statement. The vector's data() pointer is valid until the vector is destroyed.
+    // Use SQLITE_TRANSIENT to indicate that SQLite should make a private copy of the data.
+    // This is safer as `binary_data` might go out of scope after this call.
     sqlite3_bind_blob(stmt, 2, binary_data.data(), static_cast<int>(binary_data.size()), SQLITE_TRANSIENT);
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        std::cerr << "Failed to execute statement for aggregated data: " << sqlite3_errmsg(db_) << std::endl;
+        spdlog::get("SQLiteDatabaseManager")->error("Failed to execute statement for aggregated data: {}", sqlite3_errmsg(db_));
         sqlite3_finalize(stmt);
         return false;
     }
 
     sqlite3_finalize(stmt);
-    std::cout << "Successfully inserted aggregated data into SQLite for timestamp: " << timestamp_str << std::endl;
+    spdlog::get("SQLiteDatabaseManager")->info("Successfully inserted aggregated data into SQLite for timestamp: {}", timestamp_str);
     return true;
 }
 
@@ -113,9 +116,9 @@ void SQLiteDatabaseManager::shutdown() {
     if (db_) {
         int rc = sqlite3_close(db_);
         if (rc != SQLITE_OK) {
-            std::cerr << "Error closing database: " << sqlite3_errmsg(db_) << std::endl;
+            spdlog::get("SQLiteDatabaseManager")->error("Error closing database: {}", sqlite3_errmsg(db_));
         } else {
-            std::cout << "Database closed." << std::endl;
+            spdlog::get("SQLiteDatabaseManager")->info("Database closed.");
         }
         db_ = nullptr;
     }
