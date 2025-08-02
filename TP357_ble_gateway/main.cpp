@@ -13,19 +13,23 @@
 #include "spdlog/spdlog.h"
 #include "spdlog/sinks/stdout_color_sinks.h" // For console output with colors
 
+// libcurl global init/cleanup
+#include <curl/curl.h>
+
 // Include full definitions of classes used as concrete objects or template arguments first
 #include "MessageQueue.h"          // Provides full definition of MessageQueue
 #include "SQLiteDatabaseManager.h" // Provides full definition of SQLiteDatabaseManager
 #include "DataProcessor.h"         // Provides full definition of DataProcessor
 #include "EnvReader.h"             // Provides full definition of EnvReader
 #include "BluetoothScanner.h"      // Include the BluetoothScanner class
-#include "IDataConsumer.h"         // New: Interface for data consumers
+#include "IDataConsumer.h"         // Interface for data consumers
+#include "RestApiConsumer.h"       // NEW: Include the RestApiConsumer
 
 // Global pointers for graceful shutdown
 BluetoothScanner* g_scanner_ptr = nullptr;
 // Changed to a vector to manage multiple consumers
-std::vector<IDataConsumer*> g_consumers_ptrs;
-std::mutex g_consumers_mutex; // Mutex to protect access to g_consumers_ptrs
+std::vector<std::unique_ptr<IDataConsumer>> g_consumers; // Use unique_ptr for ownership
+std::mutex g_consumers_mutex; // Mutex to protect access to g_consumers
 
 // Signal handler function to gracefully terminate the program
 void signal_handler(int signum) {
@@ -33,9 +37,9 @@ void signal_handler(int signum) {
 
     // Stop all registered consumers first
     std::lock_guard<std::mutex> lock(g_consumers_mutex);
-    for (IDataConsumer* consumer : g_consumers_ptrs) {
-        if (consumer) {
-            consumer->stopConsuming();
+    for (const auto& consumer_ptr : g_consumers) { // Iterate through unique_ptrs
+        if (consumer_ptr) {
+            consumer_ptr->stopConsuming();
         }
     }
 
@@ -46,6 +50,13 @@ void signal_handler(int signum) {
 }
 
 int main(int argc, char **argv) {
+    // --- Global cURL Initialization (Do this once at application start) ---
+    CURLcode curl_global_res = curl_global_init(CURL_GLOBAL_ALL);
+    if (curl_global_res != CURLE_OK) {
+        std::cerr << "curl_global_init() failed: " << curl_easy_strerror(curl_global_res) << std::endl;
+        return 1;
+    }
+
     // --- spdlog Initialization ---
     try {
         // Create a color-enabled console sink
@@ -64,15 +75,19 @@ int main(int argc, char **argv) {
         spdlog::create<spdlog::sinks::stdout_color_sink_mt>("BluetoothScanner");
         spdlog::create<spdlog::sinks::stdout_color_sink_mt>("TP357Handler");
         spdlog::create<spdlog::sinks::stdout_color_sink_mt>("MessageQueue");
-        spdlog::create<spdlog::sinks::stdout_color_sink_mt>("DataProcessor"); // Renamed from DataProcessor Loop
+        spdlog::create<spdlog::sinks::stdout_color_sink_mt>("DataProcessor");
         spdlog::create<spdlog::sinks::stdout_color_sink_mt>("SQLiteDatabaseManager");
         spdlog::create<spdlog::sinks::stdout_color_sink_mt>("EnvReader");
+        spdlog::create<spdlog::sinks::stdout_color_sink_mt>("SensorDataSerializer");
+        auto rest_api_logger = spdlog::create<spdlog::sinks::stdout_color_sink_mt>("RestApiConsumer");
+        rest_api_logger->set_level(spdlog::level::trace); // Set RestApiConsumer to TRACE for maximum verbosity
 
         spdlog::get("Main")->info("spdlog initialized successfully.");
 
     } catch (const spdlog::spdlog_ex& ex) {
         std::cerr << "spdlog initialization failed: " << ex.what() << std::endl;
-        return 1; // Exit if logging cannot be set up
+        curl_global_cleanup(); // Clean up curl if spdlog fails
+        return 1;
     }
     // --- End spdlog Initialization ---
 
@@ -85,9 +100,14 @@ int main(int argc, char **argv) {
         spdlog::get("EnvReader")->error("Could not load .env file. Using default settings.");
     }
 
-    // Get logging window duration from .env or use a default (e.g., 20 seconds)
-    int logging_window_seconds = std::stoi(env_reader.getOrDefault("LOGGING_WINDOW_SECONDS", "20"));
+    // Get logging window duration from .env or use a default (e.g., 5 seconds for testing)
+    int logging_window_seconds = std::stoi(env_reader.getOrDefault("LOGGING_WINDOW_SECONDS", "5")); // Changed to 5s for easier testing
     spdlog::get("Main")->info("Configured logging window: {} seconds.", logging_window_seconds);
+
+    // Get REST API URL from .env or use a default
+    std::string rest_api_url = env_reader.getOrDefault("REST_API_URL", "http://localhost:3000/sensor-data");
+    spdlog::get("Main")->info("Configured REST API URL: {}", rest_api_url);
+
 
     // Create the message queue
     MessageQueue sensor_data_queue;
@@ -116,39 +136,31 @@ int main(int argc, char **argv) {
     // Initialize the Bluetooth scanner
     if (!scanner.init()) {
         spdlog::get("BluetoothScanner")->error("Failed to initialize Bluetooth scanner. Exiting.");
+        curl_global_cleanup(); // Clean up curl if scanner fails
         return 1;
     }
 
     // --- Data Consumers Setup ---
-    std::vector<std::unique_ptr<IDataConsumer>> consumers;
-
-    // Create and initialize the SQLite database manager
+    // 1. SQLite Data Processor
     auto sqlite_db_manager = std::make_unique<SQLiteDatabaseManager>();
     if (!sqlite_db_manager->initialize("sensor_readings.db")) {
         spdlog::get("SQLiteDatabaseManager")->error("Failed to initialize SQLite database. Exiting.");
-        scanner.stopScan(); // Ensure scanner is stopped if DB init fails
+        scanner.stopScan();
+        curl_global_cleanup(); // Clean up curl if DB fails
         return 1;
     }
+    g_consumers.push_back(std::make_unique<DataProcessor>(sensor_data_queue, std::move(sqlite_db_manager), logging_window_seconds));
 
-    // Create the DataProcessor instance (now an IDataConsumer)
-    // Pass the message queue and the database manager to it
-    consumers.push_back(std::make_unique<DataProcessor>(sensor_data_queue, std::move(sqlite_db_manager), logging_window_seconds));
-
-    // Add other consumers here if needed, e.g.:
-    // consumers.push_back(std::make_unique<AnotherConsumer>(sensor_data_queue, other_dependency));
-
-    // Register consumers for global shutdown
-    {
-        std::lock_guard<std::mutex> lock(g_consumers_mutex);
-        for (const auto& consumer_ptr : consumers) {
-            g_consumers_ptrs.push_back(consumer_ptr.get());
-        }
-    }
+    // 2. REST API Consumer
+    g_consumers.push_back(std::make_unique<RestApiConsumer>(sensor_data_queue, rest_api_url, logging_window_seconds));
 
     // Start all data consumers
     spdlog::get("Main")->info("Attempting to start data consumers...");
-    for (const auto& consumer_ptr : consumers) {
-        consumer_ptr->startConsuming();
+    {
+        std::lock_guard<std::mutex> lock(g_consumers_mutex); // Lock while starting consumers
+        for (const auto& consumer_ptr : g_consumers) {
+            consumer_ptr->startConsuming();
+        }
     }
     spdlog::get("Main")->info("Data consumers start attempt complete.");
     // --- End Data Consumers Setup ---
@@ -161,23 +173,23 @@ int main(int argc, char **argv) {
 
 
     // Main thread waits for the scanner thread to finish
-    // (which happens when Ctrl+C is pressed and stopScan() is called).
     scanner_thread.join();
 
     // Ensure all data consumers also finish after scanner, if not already stopped by signal handler
-    // This loop is a fallback, as signal_handler should have already called stopConsuming.
     spdlog::get("Main")->info("Ensuring all data consumers are stopped...");
     {
-        std::lock_guard<std::mutex> lock(g_consumers_mutex); // Lock to prevent race with signal handler
-        for (IDataConsumer* consumer : g_consumers_ptrs) {
-            if (consumer) {
-                consumer->stopConsuming(); // Calling stopConsuming again is safe (checks joinable)
+        std::lock_guard<std::mutex> lock(g_consumers_mutex); // Lock while stopping consumers
+        // The signal handler should have already called stopConsuming, but this ensures it.
+        // It's safe to call stopConsuming multiple times (it checks if thread is joinable).
+        for (const auto& consumer_ptr : g_consumers) {
+            if (consumer_ptr) {
+                consumer_ptr->stopConsuming();
             }
         }
-        g_consumers_ptrs.clear(); // Clear the global list
+        g_consumers.clear(); // Clear the vector of unique_ptrs
     }
 
-
     spdlog::get("Main")->info("Main thread exiting.");
+    curl_global_cleanup(); // Global cURL cleanup (Do this once at application end)
     return 0;
 }

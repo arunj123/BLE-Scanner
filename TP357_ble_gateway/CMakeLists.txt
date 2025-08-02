@@ -1,6 +1,10 @@
 # TP357_ble_gateway/CMakeLists.txt
 # (Assuming this is the CMakeLists.txt inside your TP357_ble_gateway directory)
 
+# Find libcurl
+# This makes the CURL::libcurl target available for linking.
+find_package(CURL REQUIRED)
+
 # Add the tp357_gateway executable
 add_executable(tp357_gateway
     main.cpp
@@ -9,16 +13,19 @@ add_executable(tp357_gateway
     SQLiteDatabaseManager.cpp
     DataProcessor.cpp
     EnvReader.cpp
+    SensorDataSerializer.cpp
+    RestApiConsumer.cpp
 )
 
-# Link tp357_gateway with its dependencies, including btlib, Bluetooth, SQLite3, spdlog, and pthread
+# Link tp357_gateway with its dependencies, including btlib, Bluetooth, SQLite3, spdlog, pthread, and curl
 target_link_libraries(tp357_gateway PRIVATE
     btlib
     ${BLUETOOTH_LIBRARIES}
     pthread
     ${SQLite3_LIBRARIES}
     sqlite3
-    spdlog::spdlog # Link against the spdlog target provided by FetchContent
+    spdlog::spdlog
+    CURL::libcurl # Link against libcurl provided by find_package(CURL)
 )
 
 # Add required capabilities to the final executable to run without sudo

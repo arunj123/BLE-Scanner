@@ -1,5 +1,6 @@
 // DataProcessor.cpp
 #include "DataProcessor.h"
+#include "SensorDataSerializer.h" // Include the new serializer
 #include <chrono> // For std::chrono::milliseconds, steady_clock, system_clock
 #include <mutex>  // For std::lock_guard
 #include <exception> // For std::exception
@@ -74,7 +75,7 @@ void DataProcessor::stopConsuming() {
         std::lock_guard<std::mutex> lock(latest_samples_mutex_); // Use latest_samples_mutex_
         if (!latest_samples_in_window_.empty() && sqlite_db_manager_) { // Check if map is not empty
             std::string timestamp_str = formatTimestamp(std::chrono::system_clock::now());
-            std::vector<char> binary_data = serializeSensorDataMap(latest_samples_in_window_);
+            std::vector<char> binary_data = SensorDataSerializer::serializeSensorDataMap(latest_samples_in_window_); // Use serializer
             spdlog::get("DataProcessor")->info("[Shutdown] Flushing last collected aggregated sample (count: {}) for timestamp {} to SQLite.", latest_samples_in_window_.size(), timestamp_str);
             sqlite_db_manager_->insertAggregatedSensorData(timestamp_str, binary_data);
             latest_samples_in_window_.clear(); // Clear it after flushing
@@ -149,7 +150,7 @@ void DataProcessor::processingLoop() {
                 if (!latest_samples_in_window_.empty()) { // Check if map is not empty
                     // Get current timestamp for this aggregated entry
                     std::string timestamp_str = formatTimestamp(std::chrono::system_clock::now());
-                    std::vector<char> binary_data = serializeSensorDataMap(latest_samples_in_window_);
+                    std::vector<char> binary_data = SensorDataSerializer::serializeSensorDataMap(latest_samples_in_window_); // Use serializer
 
                     // Log the aggregated data from the expired window to SQLite
                     if (sqlite_db_manager_) {
@@ -173,63 +174,6 @@ void DataProcessor::processingLoop() {
     } catch (...) {
         spdlog::get("DataProcessor")->critical("[Loop] FATAL ERROR: Unknown unhandled exception.");
     }
-}
-
-/**
- * @brief Helper function to serialize the map of SensorData into a binary vector.
- * @param data_map The map containing SensorData to serialize.
- * @return A vector of characters representing the binary data.
- */
-std::vector<char> DataProcessor::serializeSensorDataMap(const std::map<std::string, SensorData>& data_map) {
-    std::vector<char> buffer;
-    // Reserve some space to reduce reallocations (estimation)
-    // Roughly: 1 byte for count + N * (6 bytes MAC + 8 bytes temp + 8 bytes hum + 1 byte RSSI)
-    buffer.reserve(1 + data_map.size() * (6 + sizeof(double) + sizeof(double) + 1));
-
-    // Write total number of sensors in this aggregation (1 byte)
-    uint8_t num_sensors = static_cast<uint8_t>(data_map.size());
-    buffer.push_back(num_sensors);
-    spdlog::get("DataProcessor")->debug("Serializing {} sensors into binary blob.", num_sensors);
-
-    for (const auto& pair : data_map) {
-        const SensorData& data = pair.second;
-
-        // MAC Address (fixed 6 bytes)
-        std::array<uint8_t, 6> mac_bytes;
-        // Parse MAC string "AA:BB:CC:DD:EE:FF" into 6 bytes
-        if (std::sscanf(data.mac_address.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-                        &mac_bytes[0], &mac_bytes[1], &mac_bytes[2],
-                        &mac_bytes[3], &mac_bytes[4], &mac_bytes[5]) == 6) {
-            for (size_t i = 0; i < 6; ++i) {
-                buffer.push_back(static_cast<char>(mac_bytes[i]));
-            }
-            spdlog::get("DataProcessor")->debug("  - Serialized MAC: {}", data.mac_address);
-        } else {
-            spdlog::get("DataProcessor")->error("Failed to parse MAC address for serialization: {}", data.mac_address);
-            // Push 6 zero bytes as fallback for malformed MAC
-            for (size_t i = 0; i < 6; ++i) {
-                buffer.push_back(0);
-            }
-        }
-
-        // Predefined Name and Decoded Device Name are no longer serialized.
-
-        // Temperature (double)
-        const char* temp_bytes = reinterpret_cast<const char*>(&data.temperature);
-        for (size_t i = 0; i < sizeof(double); ++i) buffer.push_back(temp_bytes[i]);
-        spdlog::get("DataProcessor")->debug("  - Serialized Temperature: {}", data.temperature);
-
-        // Humidity (double)
-        const char* hum_bytes = reinterpret_cast<const char*>(&data.humidity);
-        for (size_t i = 0; i < sizeof(double); ++i) buffer.push_back(hum_bytes[i]);
-        spdlog::get("DataProcessor")->debug("  - Serialized Humidity: {}", data.humidity);
-
-        // RSSI (int8_t)
-        buffer.push_back(static_cast<char>(data.rssi));
-        spdlog::get("DataProcessor")->debug("  - Serialized RSSI: {}", (int)data.rssi);
-    }
-    spdlog::get("DataProcessor")->debug("Serialization complete. Blob size: {} bytes.", buffer.size());
-    return buffer;
 }
 
 /**
