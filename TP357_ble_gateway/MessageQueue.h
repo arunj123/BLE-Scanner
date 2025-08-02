@@ -9,6 +9,9 @@
 #include <optional> // C++17 for std::optional
 #include <chrono>   // For std::chrono::milliseconds
 
+// spdlog include
+#include "spdlog/spdlog.h"
+
 /**
  * @brief A thread-safe message queue for SensorData objects.
  * This queue allows multiple threads to safely push and pop data.

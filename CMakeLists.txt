@@ -1,30 +1,43 @@
-    cmake_minimum_required(VERSION 3.16)
-    project(Home C CXX)
+cmake_minimum_required(VERSION 3.16)
+project(Home C CXX)
 
-    # --- Create a static library for btlib ---
-    # This allows multiple executables to use the btlib code without compiling it each time.
-    # This assumes btlib.h and btlib.c are inside a 'btlib' subdirectory.
-    # If they are in the root, change the path to "btlib.c".
-    add_library(btlib STATIC btlib/btlib.c)
-    # Make the btlib header file available to any target that links against the library.
-    target_include_directories(btlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/btlib)
+# --- FetchContent for spdlog ---
+# This module allows CMake to download and integrate external projects.
+include(FetchContent)
 
-    # Find the Bluetooth library (BlueZ) - may be needed for tp357_gateway
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(BLUETOOTH REQUIRED bluez)
+# Define spdlog content
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.13.0 # Use a specific tag for stability
+)
 
-    # --- Firebase Admin SDK Configuration (REMOVED) ---
-    # All Firebase-related configuration has been removed from here.
+# Fetch the content (downloads if not already present)
+FetchContent_MakeAvailable(spdlog)
 
-    # --- Include the original tp357_gateway application project ---
-    # This tells CMake to look for another CMakeLists.txt in the 'TP357_ble_gateway' directory.
-    add_subdirectory(TP357_ble_gateway)
+# --- Create a static library for btlib ---
+# This allows multiple executables to use the btlib code without compiling it each time.
+# This assumes btlib.h and btlib.c are inside a 'btlib' subdirectory.
+# If they are in the root, change the path to "btlib.c".
+add_library(btlib STATIC btlib/btlib.c)
+# Make the btlib header file available to any target that links against the library.
+target_include_directories(btlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/btlib)
 
-    # --- Include the iTag application project ---
-    # This tells CMake to look for another CMakeLists.txt in the 'btlib_app' directory.
-    add_subdirectory(btlib_app)
+# Find the Bluetooth library (BlueZ) - may be needed for tp357_gateway
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(BLUETOOTH REQUIRED bluez)
 
-    # --- Include the CameraDrmDisplay project as a subdirectory ---
-    # This will build the CameraDrmDisplay executable as part of this project.
-    add_subdirectory(camera_drm_display)
-    
+# --- Firebase Admin SDK Configuration (REMOVED) ---
+# All Firebase-related configuration has been removed from here.
+
+# --- Include the original tp357_gateway application project ---
+# This tells CMake to look for another CMakeLists.txt in the 'TP357_ble_gateway' directory.
+add_subdirectory(TP357_ble_gateway)
+
+# --- Include the iTag application project ---
+# This tells CMake to look for another CMakeLists.txt in the 'btlib_app' directory.
+add_subdirectory(btlib_app)
+
+# --- Include the CameraDrmDisplay project as a subdirectory ---
+# This will build the CameraDrmDisplay executable as part of this project.
+add_subdirectory(camera_drm_display)

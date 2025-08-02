@@ -1,11 +1,14 @@
 // DataProcessor.cpp
 #include "DataProcessor.h"
-#include <iostream>
 #include <chrono> // For std::chrono::milliseconds, steady_clock, system_clock
 #include <mutex>  // For std::lock_guard
 #include <exception> // For std::exception
 #include <iomanip> // For std::put_time
 #include <sstream> // For std::stringstream
+#include <cstdint> // For uint64_t (though not directly used for thread ID now)
+
+// spdlog include
+#include "spdlog/spdlog.h"
 
 /**
  * @brief Constructs a DataProcessor.
@@ -36,17 +39,21 @@ DataProcessor::~DataProcessor() {
  */
 void DataProcessor::startProcessing() {
     if (processing_thread_.joinable()) {
-        std::cerr << "DataProcessor already running." << std::endl;
+        spdlog::get("DataProcessor")->error("DataProcessor already running.");
         return;
     }
     // Start the processingLoop in a new thread
     processing_thread_ = std::thread(&DataProcessor::processingLoop, this);
-    std::cout << "DataProcessor started. Thread ID: " << processing_thread_.get_id() << std::endl; // Added thread ID
+
+    // Convert std::thread::id to string for spdlog compatibility
+    std::ostringstream oss;
+    oss << processing_thread_.get_id();
+    spdlog::get("DataProcessor")->info("DataProcessor started. Thread ID: {}", oss.str());
 
     if (processing_thread_.joinable()) {
-        std::cout << "DataProcessor thread is joinable (successfully created)." << std::endl;
+        spdlog::get("DataProcessor")->info("DataProcessor thread is joinable (successfully created).");
     } else {
-        std::cerr << "ERROR: DataProcessor thread is NOT joinable after creation. Thread creation might have failed." << std::endl;
+        spdlog::get("DataProcessor")->error("ERROR: DataProcessor thread is NOT joinable after creation. Thread creation might have failed.");
     }
 }
 
@@ -66,17 +73,17 @@ void DataProcessor::stopProcessing() {
         if (!latest_samples_in_window_.empty() && sqlite_db_manager_) { // Check if map is not empty
             std::string timestamp_str = formatTimestamp(std::chrono::system_clock::now());
             std::vector<char> binary_data = serializeSensorDataMap(latest_samples_in_window_);
-            std::cout << "[DataProcessor Shutdown] Flushing last collected aggregated sample (count: " << latest_samples_in_window_.size() << ") for timestamp " << timestamp_str << " to SQLite." << std::endl;
+            spdlog::get("DataProcessor")->info("[Shutdown] Flushing last collected aggregated sample (count: {}) for timestamp {} to SQLite.", latest_samples_in_window_.size(), timestamp_str);
             sqlite_db_manager_->insertAggregatedSensorData(timestamp_str, binary_data);
             latest_samples_in_window_.clear(); // Clear it after flushing
         } else if (latest_samples_in_window_.empty()) {
-            std::cout << "[DataProcessor Shutdown] No samples to flush on shutdown." << std::endl;
+            spdlog::get("DataProcessor")->info("[Shutdown] No samples to flush on shutdown.");
         } else {
-            std::cout << "[DataProcessor Shutdown] SQLite manager not available, no flush." << std::endl;
+            spdlog::get("DataProcessor")->warn("[Shutdown] SQLite manager not available, no flush.");
         }
         // --- End Flush ---
 
-        std::cout << "DataProcessor stopped." << std::endl;
+        spdlog::get("DataProcessor")->info("DataProcessor stopped.");
     }
 }
 
@@ -84,12 +91,14 @@ void DataProcessor::stopProcessing() {
  * @brief The main loop for processing data from the queue and inserting into the database.
  */
 void DataProcessor::processingLoop() {
-    // Add an immediate print statement here to confirm thread execution
-    std::cout << "[DataProcessor Loop] Thread has started execution. Thread ID: " << std::this_thread::get_id() << std::endl << std::flush;
-    std::cout << "[DataProcessor Loop] Initial keep_running_ state: " << (keep_running_.load() ? "true" : "false") << std::endl << std::flush;
+    // Convert std::this_thread::get_id() to string for spdlog compatibility
+    std::ostringstream oss_loop_id;
+    oss_loop_id << std::this_thread::get_id();
+    spdlog::get("DataProcessor")->info("[Loop] Thread has started execution. Thread ID: {}", oss_loop_id.str());
+    spdlog::get("DataProcessor")->info("[Loop] Initial keep_running_ state: {}", (keep_running_.load() ? "true" : "false"));
 
     try {
-        std::cout << "[DataProcessor Loop] Entered. Logging window: " << logging_window_duration_.count() << " seconds." << std::endl << std::flush;
+        spdlog::get("DataProcessor")->info("[Loop] Entered. Logging window: {} seconds.", logging_window_duration_.count());
 
         window_start_time_ = std::chrono::steady_clock::now(); // Initialize the first window start time
 
@@ -110,15 +119,16 @@ void DataProcessor::processingLoop() {
 
                 // Check if this is the dummy shutdown signal.
                 if (!keep_running_.load() && received_data.mac_address.empty() && received_data.predefined_name.empty() && received_data.decoded_device_name.empty()) {
-                    std::cout << "[DataProcessor Loop] Received shutdown signal in processing loop. Breaking." << std::endl << std::flush;
+                    spdlog::get("DataProcessor")->info("[Loop] Received shutdown signal in processing loop. Breaking.");
                     break; // Exit the loop
                 }
 
                 // Update the latest sample received in the current window for its MAC address
                 std::lock_guard<std::mutex> lock(latest_samples_mutex_); // Use latest_samples_mutex_
                 latest_samples_in_window_[received_data.mac_address] = received_data;
-                std::cout << "[DataProcessor Loop] Updated latest sample for MAC: " << received_data.mac_address
-                          << " (Name: " << received_data.predefined_name << ", Temp: " << received_data.temperature << ", Hum: " << received_data.humidity << ", RSSI: " << (int)received_data.rssi << ")" << std::endl << std::flush;
+                spdlog::get("DataProcessor")->info("[Loop] Updated latest sample for MAC: {} (Name: {}, Temp: {}, Hum: {}, RSSI: {})",
+                                                  received_data.mac_address, received_data.predefined_name,
+                                                  received_data.temperature, received_data.humidity, (int)received_data.rssi);
 
             } else {
                 // Timeout occurred on queue.pop(), or queue was empty.
@@ -130,9 +140,9 @@ void DataProcessor::processingLoop() {
             now = std::chrono::steady_clock::now(); // Re-check time after potential pop/timeout
             if (now - window_start_time_ >= logging_window_duration_) {
                 std::lock_guard<std::mutex> lock(latest_samples_mutex_); // Use latest_samples_mutex_
-                std::cout << "[DataProcessor Loop] Window expiration check: Current time - Window start time = "
-                          << std::chrono::duration_cast<std::chrono::seconds>(now - window_start_time_).count()
-                          << "s. Duration: " << logging_window_duration_.count() << "s." << std::endl << std::flush;
+                spdlog::get("DataProcessor")->info("[Loop] Window expiration check: Current time - Window start time = {}s. Duration: {}s.",
+                                                  std::chrono::duration_cast<std::chrono::seconds>(now - window_start_time_).count(),
+                                                  logging_window_duration_.count());
 
                 if (!latest_samples_in_window_.empty()) { // Check if map is not empty
                     // Get current timestamp for this aggregated entry
@@ -141,25 +151,25 @@ void DataProcessor::processingLoop() {
 
                     // Log the aggregated data from the expired window to SQLite
                     if (sqlite_db_manager_) {
-                        std::cout << "[DataProcessor Loop] Window expired. Logging aggregated sample (count: " << latest_samples_in_window_.size() << ") for timestamp " << timestamp_str << " to SQLite." << std::endl << std::flush;
+                        spdlog::get("DataProcessor")->info("[Loop] Window expired. Logging aggregated sample (count: {}) for timestamp {} to SQLite.", latest_samples_in_window_.size(), timestamp_str);
                         sqlite_db_manager_->insertAggregatedSensorData(timestamp_str, binary_data);
                     } else {
-                        std::cerr << "[DataProcessor Loop] SQLite database manager not available. Cannot log aggregated data." << std::endl << std::flush;
+                        spdlog::get("DataProcessor")->error("[Loop] SQLite database manager not available. Cannot log aggregated data.");
                     }
                     latest_samples_in_window_.clear(); // Clear the map for the next window
                 } else {
-                    std::cout << "[DataProcessor Loop] Window expired, but no samples received in this window. Not logging." << std::endl << std::flush;
+                    spdlog::get("DataProcessor")->info("[Loop] Window expired, but no samples received in this window. Not logging.");
                 }
                 // Start a new window
                 window_start_time_ = now;
-                std::cout << "[DataProcessor Loop] New logging window started." << std::endl << std::flush;
+                spdlog::get("DataProcessor")->info("[Loop] New logging window started.");
             }
         }
-        std::cout << "[DataProcessor Loop] Exited." << std::endl << std::flush;
+        spdlog::get("DataProcessor")->info("[Loop] Exited.");
     } catch (const std::exception& e) {
-        std::cerr << "[DataProcessor Loop] FATAL ERROR: Unhandled exception: " << e.what() << std::endl << std::flush;
+        spdlog::get("DataProcessor")->critical("[Loop] FATAL ERROR: Unhandled exception: {}", e.what());
     } catch (...) {
-        std::cerr << "[DataProcessor Loop] FATAL ERROR: Unknown unhandled exception." << std::endl << std::flush;
+        spdlog::get("DataProcessor")->critical("[Loop] FATAL ERROR: Unknown unhandled exception.");
     }
 }
 
@@ -171,11 +181,14 @@ void DataProcessor::processingLoop() {
 std::vector<char> DataProcessor::serializeSensorDataMap(const std::map<std::string, SensorData>& data_map) {
     std::vector<char> buffer;
     // Reserve some space to reduce reallocations (estimation)
-    buffer.reserve(data_map.size() * (1 + 18 + 1 + 30 + 1 + 30 + sizeof(double) + sizeof(double) + 1 + 25)); // Rough estimate
+    // Roughly: 1 byte for count + N * (1 byte MAC len + 18 bytes MAC + 1 byte PNAME len + 30 bytes PNAME + 1 byte DNAME len + 30 bytes DNAME + 8 bytes temp + 8 bytes hum + 1 byte RSSI)
+    // Using average string lengths for estimation
+    buffer.reserve(1 + data_map.size() * (1 + 18 + 1 + 20 + 1 + 20 + sizeof(double) + sizeof(double) + 1));
 
     // Write total number of sensors in this aggregation (1 byte)
     uint8_t num_sensors = static_cast<uint8_t>(data_map.size());
     buffer.push_back(num_sensors);
+    spdlog::get("DataProcessor")->debug("Serializing {} sensors into binary blob.", num_sensors);
 
     for (const auto& pair : data_map) {
         const SensorData& data = pair.second;
@@ -184,31 +197,40 @@ std::vector<char> DataProcessor::serializeSensorDataMap(const std::map<std::stri
         uint8_t mac_len = static_cast<uint8_t>(data.mac_address.length());
         buffer.push_back(mac_len);
         for (char c : data.mac_address) buffer.push_back(c);
+        spdlog::get("DataProcessor")->debug("  - Serialized MAC: {}", data.mac_address);
 
         // Predefined Name
         uint8_t predefined_name_len = static_cast<uint8_t>(data.predefined_name.length());
         buffer.push_back(predefined_name_len);
         for (char c : data.predefined_name) buffer.push_back(c);
+        spdlog::get("DataProcessor")->debug("  - Serialized Predefined Name: {}", data.predefined_name);
+
 
         // Decoded Device Name
         uint8_t decoded_device_name_len = static_cast<uint8_t>(data.decoded_device_name.length());
         buffer.push_back(decoded_device_name_len);
         for (char c : data.decoded_device_name) buffer.push_back(c);
+        spdlog::get("DataProcessor")->debug("  - Serialized Decoded Name: {}", data.decoded_device_name);
+
 
         // Temperature (double)
         const char* temp_bytes = reinterpret_cast<const char*>(&data.temperature);
         for (size_t i = 0; i < sizeof(double); ++i) buffer.push_back(temp_bytes[i]);
+        spdlog::get("DataProcessor")->debug("  - Serialized Temperature: {}", data.temperature);
+
 
         // Humidity (double)
         const char* hum_bytes = reinterpret_cast<const char*>(&data.humidity);
         for (size_t i = 0; i < sizeof(double); ++i) buffer.push_back(hum_bytes[i]);
+        spdlog::get("DataProcessor")->debug("  - Serialized Humidity: {}", data.humidity);
+
 
         // RSSI (int8_t)
         buffer.push_back(static_cast<char>(data.rssi));
+        spdlog::get("DataProcessor")->debug("  - Serialized RSSI: {}", (int)data.rssi);
 
-        // Note: SensorData's timestamp is not serialized here, as the aggregated row has its own TIMESTAMP.
-        // If individual sensor timestamps within the window are needed, they would be added here.
     }
+    spdlog::get("DataProcessor")->debug("Serialization complete. Blob size: {} bytes.", buffer.size());
     return buffer;
 }
 

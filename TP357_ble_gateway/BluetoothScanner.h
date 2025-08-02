@@ -9,11 +9,14 @@
 #include <map>    // For std::map to store device names
 
 // Forward declaration for MessageQueue as TP357Handler only holds a pointer to it.
-class MessageQueue; 
+class MessageQueue;
 
 #include <bluetooth/bluetooth.h> // For ba2str
 #include <bluetooth/hci.h>       // For HCI event types and structures
 #include <bluetooth/hci_lib.h>   // For hci_open_dev, hci_close_dev, etc.
+
+// spdlog include
+#include "spdlog/spdlog.h"
 
 // --- Conditional definitions for potentially missing BlueZ symbols ---
 // These are duplicated here to ensure BluetoothScanner.cpp compiles independently.

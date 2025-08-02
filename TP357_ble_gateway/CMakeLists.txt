@@ -11,13 +11,14 @@ add_executable(tp357_gateway
     EnvReader.cpp
 )
 
-# Link tp357_gateway with its dependencies, including btlib, Bluetooth, SQLite3, and pthread
+# Link tp357_gateway with its dependencies, including btlib, Bluetooth, SQLite3, spdlog, and pthread
 target_link_libraries(tp357_gateway PRIVATE
     btlib
     ${BLUETOOTH_LIBRARIES}
     pthread
-    ${SQLite3_LIBRARIES} # Link SQLite3 (already there, but confirming its importance)
-    sqlite3              # <--- ADDED THIS LINE to explicitly link the sqlite3 library
+    ${SQLite3_LIBRARIES}
+    sqlite3
+    spdlog::spdlog # Link against the spdlog target provided by FetchContent
 )
 
 # Add required capabilities to the final executable to run without sudo

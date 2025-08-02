@@ -2,7 +2,6 @@
 #include "BluetoothScanner.h"
 #include "MessageQueue.h" // Include for MessageQueue (full definition needed for TP357Handler::setMessageQueue)
 #include "SensorData.h"   // Include for SensorData (full definition needed for creating SensorData objects)
-#include <iostream>
 #include <cstring>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -11,6 +10,10 @@
 #include <algorithm> // For std::max
 #include <fcntl.h> // For fcntl and O_NONBLOCK
 #include <chrono> // For std::chrono::system_clock::now()
+
+// spdlog include
+#include "spdlog/spdlog.h"
+
 
 // --- TP357Handler Implementation ---
 
@@ -35,12 +38,7 @@ void TP357Handler::parse_advertising_data_tp357(uint8_t *data, int len, std::str
         int field_data_len = field_len - 1;
 
         if (verbose_output) {
-            // Print all AD types and their raw data for debugging/completeness
-            // std::cout << "    AD Type: 0x" << std::hex << (int)field_type << std::dec << " (Len: " << (int)field_len << ") Raw Data: ";
-            // for (int i = 0; i < field_data_len; ++i) {
-            //     printf("%02X ", field_data[i]);
-            // }
-            // std::cout << std::endl;
+            // spdlog::get("TP357Handler")->debug("    AD Type: 0x{:02x} (Len: {}) Raw Data: {}", (int)field_type, (int)field_len, spdlog::to_hex(field_data, field_data + field_data_len));
         }
 
         switch (field_type) {
@@ -49,13 +47,13 @@ void TP357Handler::parse_advertising_data_tp357(uint8_t *data, int len, std::str
                 // Extract device name
                 device_name_out.assign((char*)field_data, field_data_len);
                 // if (verbose_output) {
-                //     std::cout << "      Decoded Device Name: \"" << device_name_out << "\"" << std::endl;
+                //     spdlog::get("TP357Handler")->debug("      Decoded Device Name: \"{}\"", device_name_out);
                 // }
                 break;
             }
             case AD_TYPE_MANUFACTURER_SPECIFIC_DATA: {
                 // if (verbose_output) {
-                //     std::cout << "      Decoded Manufacturer Specific Data: ";
+                //     spdlog::get("TP357Handler")->debug("      Decoded Manufacturer Specific Data: ");
                 // }
                 // Check if enough data for Company ID (2 bytes), Temperature (2 bytes), and Humidity (1 byte)
                 // Based on ESP32 snippet, temperature is at index 1,2 (little-endian) and humidity at index 3.
@@ -63,7 +61,7 @@ void TP357Handler::parse_advertising_data_tp357(uint8_t *data, int len, std::str
                 if (field_data_len >= 4) {
                     uint16_t company_id = field_data[0] | (field_data[1] << 8); // Little-endian Company ID
                     // if (verbose_output) {
-                    //     std::cout << "Company ID: 0x" << std::hex << company_id << std::dec << " ";
+                    //     spdlog::get("TP357Handler")->debug("Company ID: 0x{:04x}", company_id);
                     // }
 
                     // Temperature: 16-bit little-endian from field_data[1] and field_data[2]
@@ -74,17 +72,13 @@ void TP357Handler::parse_advertising_data_tp357(uint8_t *data, int len, std::str
                     humidity_out = static_cast<double>(field_data[3]); // Direct percentage
 
                     // if (verbose_output) {
-                    //     std::cout << "Temperature: " << temperature_out << " C, ";
-                    //     std::cout << "Humidity: " << humidity_out << " %";
+                    //     spdlog::get("TP357Handler")->debug("Temperature: {} C, Humidity: {} %", temperature_out, humidity_out);
                     // }
                 } else {
                     // if (verbose_output) {
-                    //     std::cout << "Not enough data for full decoding (expected at least 4 bytes, got " << field_data_len << ")";
+                    //     spdlog::get("TP357Handler")->warn("Not enough data for full decoding (expected at least 4 bytes, got {})", field_data_len);
                     // }
                 }
-                // if (verbose_output) {
-                //     std::cout << std::endl;
-                // }
                 break;
             }
             // Add more cases for other AD types if specific decoding is needed
@@ -103,33 +97,33 @@ void TP357Handler::handle(const std::string& addr, int8_t rssi, uint8_t *data, i
 
     std::string predefined_name;
     // Debugging: Print the received address and check map contents
-    std::cout << "\n--- Detected TP357 Device ---" << std::endl;
-    std::cout << "Received Address: \"" << addr << "\"" << std::endl;
-    std::cout << "Decoded Device Name from AD: \"" << decoded_device_name << "\"" << std::endl;
+    spdlog::get("TP357Handler")->info("\n--- Detected TP357 Device ---");
+    spdlog::get("TP357Handler")->info("Received Address: \"{}\"", addr);
+    spdlog::get("TP357Handler")->info("Decoded Device Name from AD: \"{}\"", decoded_device_name);
 
 
     // Check if a predefined name exists for this MAC address
     auto it = device_names_.find(addr);
     if (it != device_names_.end()) {
         predefined_name = it->second;
-        std::cout << "Found Predefined Name: \"" << predefined_name << "\"" << std::endl;
+        spdlog::get("TP357Handler")->info("Found Predefined Name: \"{}\"", predefined_name);
     } else {
-        std::cout << "No Predefined Name found for this address. Available names in map:" << std::endl;
+        spdlog::get("TP357Handler")->warn("No Predefined Name found for address \"{}\". Available names in map:", addr);
         if (device_names_.empty()) {
-            std::cout << "  (Map is empty)" << std::endl;
+            spdlog::get("TP357Handler")->warn("  (Map is empty)");
         } else {
             for (const auto& pair : device_names_) {
-                std::cout << "  - Key: \"" << pair.first << "\", Value: \"" << pair.second << "\"" << std::endl;
+                spdlog::get("TP357Handler")->warn("  - Key: \"{}\", Value: \"{}\"", pair.first, pair.second);
             }
         }
         // Fallback: If no predefined name, use the decoded device name
         predefined_name = decoded_device_name;
-        std::cout << "Using Decoded Device Name as fallback: \"" << predefined_name << "\"" << std::endl;
+        spdlog::get("TP357Handler")->info("Using Decoded Device Name as fallback: \"{}\"", predefined_name);
     }
 
-    std::cout << "RSSI: " << (int)rssi << std::endl;
-    std::cout << "Temperature: " << temperature << " C, Humidity: " << humidity << " %" << std::endl;
-    std::cout << "-----------------------------" << std::endl;
+    spdlog::get("TP357Handler")->info("RSSI: {}", (int)rssi);
+    spdlog::get("TP357Handler")->info("Temperature: {} C, Humidity: {} %", temperature, humidity);
+    spdlog::get("TP357Handler")->info("-----------------------------");
 
     // Create SensorData object with current timestamp
     SensorData sensor_data(addr, predefined_name, decoded_device_name, temperature, humidity, rssi, std::chrono::system_clock::now());
@@ -138,13 +132,13 @@ void TP357Handler::handle(const std::string& addr, int8_t rssi, uint8_t *data, i
     if (message_queue_) {
         message_queue_->push(sensor_data);
     } else {
-        std::cerr << "Warning: Message queue not set in TP357Handler. Data not queued." << std::endl;
+        spdlog::get("TP357Handler")->warn("Message queue not set in TP357Handler. Data not queued.");
     }
 }
 
 void TP357Handler::setDeviceName(const std::string& mac_address, const std::string& name) {
     device_names_[mac_address] = name;
-    std::cout << "Registered device: \"" << mac_address << "\" as \"" << name << "\"" << std::endl;
+    spdlog::get("TP357Handler")->info("Registered device: \"{}\" as \"{}\"", mac_address, name);
 }
 
 void TP357Handler::setMessageQueue(MessageQueue* queue) {
@@ -175,12 +169,12 @@ BluetoothScanner::~BluetoothScanner() {
 bool BluetoothScanner::init() {
     // Create the self-pipe for signaling the scan thread to stop
     if (pipe(pipefd_) == -1) {
-        perror("Failed to create pipe");
+        spdlog::get("BluetoothScanner")->error("Failed to create pipe: {}", strerror(errno));
         return false;
     }
     // Set the read end of the pipe to non-blocking
     if (fcntl(pipefd_[0], F_SETFL, O_NONBLOCK) == -1) {
-        perror("Failed to set pipe read end to non-blocking");
+        spdlog::get("BluetoothScanner")->error("Failed to set pipe read end to non-blocking: {}", strerror(errno));
         close(pipefd_[0]);
         close(pipefd_[1]);
         pipefd_[0] = -1;
@@ -190,7 +184,7 @@ bool BluetoothScanner::init() {
 
     int dev_id = hci_get_route(NULL); // Get ID of default HCI device
     if (dev_id < 0) {
-        perror("HCI device not found");
+        spdlog::get("BluetoothScanner")->error("HCI device not found: {}", strerror(errno));
         // Clean up pipe before returning
         close(pipefd_[0]);
         close(pipefd_[1]);
@@ -201,7 +195,7 @@ bool BluetoothScanner::init() {
 
     dd_ = hci_open_dev(dev_id); // Open HCI device
     if (dd_ < 0) {
-        perror("HCI device open failed");
+        spdlog::get("BluetoothScanner")->error("HCI device open failed: {}", strerror(errno));
         // Clean up pipe before returning
         close(pipefd_[0]);
         close(pipefd_[1]);
@@ -210,7 +204,7 @@ bool BluetoothScanner::init() {
         return false;
     }
 
-    std::cout << "Opened HCI device with ID: " << dev_id << std::endl;
+    spdlog::get("BluetoothScanner")->info("Opened HCI device with ID: {}", dev_id);
 
     // Set LE scan parameters
     uint8_t scan_type = 0x00; // Passive scanning (0x00 for Passive, 0x01 for Active)
@@ -221,7 +215,7 @@ bool BluetoothScanner::init() {
 
     int ret = hci_le_set_scan_parameters(dd_, scan_type, interval, window, own_address_type, scanning_filter_policy, 1000);
     if (ret < 0) {
-        perror("Failed to set scan parameters");
+        spdlog::get("BluetoothScanner")->error("Failed to set scan parameters: {}", strerror(errno));
         hci_close_dev(dd_);
         dd_ = -1; // Mark as closed
         // Clean up pipe before returning
@@ -231,7 +225,7 @@ bool BluetoothScanner::init() {
         pipefd_[1] = -1;
         return false;
     }
-    std::cout << "LE Scan parameters set." << std::endl;
+    spdlog::get("BluetoothScanner")->info("LE Scan parameters set.");
 
     // Enable LE scan
     uint8_t enable = 0x01; // Enable scanning
@@ -239,7 +233,7 @@ bool BluetoothScanner::init() {
 
     ret = hci_le_set_scan_enable(dd_, enable, filter_duplicates, 1000);
     if (ret < 0) {
-        perror("Failed to enable scan");
+        spdlog::get("BluetoothScanner")->error("Failed to enable scan: {}", strerror(errno));
         hci_close_dev(dd_);
         dd_ = -1; // Mark as closed
         // Clean up pipe before returning
@@ -249,7 +243,7 @@ bool BluetoothScanner::init() {
         pipefd_[1] = -1;
         return false;
     }
-    std::cout << "LE Scan enabled. Waiting for advertisements..." << std::endl;
+    spdlog::get("BluetoothScanner")->info("LE Scan enabled. Waiting for advertisements...");
 
     // Set up a filter for HCI events
     struct hci_filter nf;
@@ -261,7 +255,7 @@ bool BluetoothScanner::init() {
     hci_filter_set_event(EVT_CMD_COMPLETE, &nf); // For command complete events
 
     if (setsockopt(dd_, SOL_HCI, HCI_FILTER, &nf, sizeof(nf)) < 0) {
-        perror("HCI filter setup failed");
+        spdlog::get("BluetoothScanner")->error("HCI filter setup failed: {}", strerror(errno));
         hci_close_dev(dd_);
         dd_ = -1; // Mark as closed
         // Clean up pipe before returning
@@ -277,11 +271,11 @@ bool BluetoothScanner::init() {
 
 void BluetoothScanner::startScan() {
     if (dd_ < 0) {
-        std::cerr << "BluetoothScanner not initialized. Call init() first." << std::endl;
+        spdlog::get("BluetoothScanner")->error("BluetoothScanner not initialized. Call init() first.");
         return;
     }
     if (pipefd_[0] == -1 || pipefd_[1] == -1) {
-        std::cerr << "BluetoothScanner pipe not initialized. Call init() first." << std::endl;
+        spdlog::get("BluetoothScanner")->error("BluetoothScanner pipe not initialized. Call init() first.");
         return;
     }
 
@@ -298,7 +292,7 @@ void BluetoothScanner::startScan() {
     while (keep_running_.load()) { // Loop while keep_running flag is set
         // Check if the device descriptor is still valid before calling select
         if (dd_ < 0) {
-            std::cerr << "Device descriptor became invalid. Exiting scan loop." << std::endl;
+            spdlog::get("BluetoothScanner")->error("Device descriptor became invalid. Exiting scan loop.");
             break;
         }
 
@@ -317,10 +311,10 @@ void BluetoothScanner::startScan() {
                 continue;
             }
             if (errno == EBADF) { // Bad file descriptor, likely closed by stopScan()
-                std::cerr << "HCI device descriptor is invalid (EBADF). Exiting scan loop." << std::endl;
+                spdlog::get("BluetoothScanner")->error("HCI device descriptor is invalid (EBADF). Exiting scan loop.");
                 break;
             }
-            perror("select");
+            spdlog::get("BluetoothScanner")->error("select error: {}", strerror(errno));
             break; // Exit loop on critical error
         }
 
@@ -336,7 +330,7 @@ void BluetoothScanner::startScan() {
             while (read(pipefd_[0], &temp_buf, sizeof(temp_buf)) > 0) {
                 // Consume all bytes if multiple writes occurred (unlikely for single signal)
             }
-            std::cout << "Stop signal received via pipe. Exiting scan loop." << std::endl;
+            spdlog::get("BluetoothScanner")->info("Stop signal received via pipe. Exiting scan loop.");
             break; // Exit the scanning loop immediately
         }
 
@@ -349,16 +343,16 @@ void BluetoothScanner::startScan() {
                     continue;
                 }
                 if (errno == EBADF) { // Bad file descriptor, likely closed by stopScan()
-                    std::cerr << "HCI device descriptor is invalid (EBADF). Exiting scan loop." << std::endl;
+                    spdlog::get("BluetoothScanner")->error("HCI device descriptor is invalid (EBADF). Exiting scan loop.");
                     break;
                 }
-                perror("Error reading HCI event");
+                spdlog::get("BluetoothScanner")->error("Error reading HCI event: {}", strerror(errno));
                 break; // Exit loop on critical error
             }
 
             // Ensure we have at least the packet type byte + event header
             if (len < (1 + HCI_EVENT_HDR_SIZE)) { // 1 byte for packet type, HCI_EVENT_HDR_SIZE for event header
-                std::cerr << "Received malformed HCI event (too short)" << std::endl;
+                spdlog::get("BluetoothScanner")->error("Received malformed HCI event (too short). Length: {}", len);
                 continue;
             }
 
@@ -366,7 +360,7 @@ void BluetoothScanner::startScan() {
             uint8_t packet_type = buf[0];
             if (packet_type != HCI_EVENT_PKT) {
                 // Not an HCI event packet, skip or handle as error
-                std::cerr << "Received non-HCI event packet (type: 0x" << std::hex << (int)packet_type << std::dec << ")" << std::endl;
+                spdlog::get("BluetoothScanner")->warn("Received non-HCI event packet (type: 0x{:02x}). Length: {}", (int)packet_type, len);
                 continue;
             }
 
@@ -378,8 +372,8 @@ void BluetoothScanner::startScan() {
             // Check if the received length matches the expected length
             // Expected total length = 1 (packet type) + HCI_EVENT_HDR_SIZE + event_len
             if (len != (1 + HCI_EVENT_HDR_SIZE + event_len)) {
-                std::cerr << "Received HCI event with inconsistent length. Expected: "
-                          << (1 + HCI_EVENT_HDR_SIZE + event_len) << ", Got: " << len << std::endl;
+                spdlog::get("BluetoothScanner")->warn("Received HCI event with inconsistent length. Expected: {}, Got: {}. Event Code: 0x{:02x}",
+                                                      (1 + HCI_EVENT_HDR_SIZE + event_len), len, (int)event_code);
                 continue;
             }
 
@@ -418,7 +412,7 @@ void BluetoothScanner::startScan() {
 
                         if (!handled) {
                             // If no specific handler, you can choose to print a generic message or nothing
-                            // std::cout << "\nAdvertisement from (unhandled device): " << addr << " (Name: \"" << device_name_from_ad << "\", RSSI: " << (int)info->data[info->length] << ")" << std::endl;
+                            // spdlog::get("BluetoothScanner")->debug("Advertisement from (unhandled device): {} (Name: \"{}\", RSSI: {})", addr, device_name_from_ad, (int)info->data[info->length]);
                         }
 
                         // Move pointer to the next advertising info struct.
@@ -440,23 +434,23 @@ void BluetoothScanner::stopScan() {
         // Use write() to send a signal. This should be non-blocking due to the pipe's nature.
         // Even if the write blocks briefly, it's typically very short for a single byte.
         if (write(pipefd_[1], &signal_byte, sizeof(signal_byte)) == -1) {
-            perror("Failed to write to pipe for stop signal");
+            spdlog::get("BluetoothScanner")->error("Failed to write to pipe for stop signal: {}", strerror(errno));
         }
     }
 
     if (dd_ >= 0) { // Only attempt cleanup if device was successfully opened
-        std::cout << "Disabling LE scan..." << std::endl;
+        spdlog::get("BluetoothScanner")->info("Disabling LE scan...");
         // Explicitly disable scan first. Ignore errors as device might already be down.
         // This call might still block if the kernel is unresponsive, but the scan thread
         // should have already exited.
         hci_le_set_scan_enable(dd_, 0x00, 0x00, 1000);
 
-        std::cout << "Closing HCI device..." << std::endl;
+        spdlog::get("BluetoothScanner")->info("Closing HCI device...");
         // Closing the device will unblock any pending read/select calls on it.
         // This call might also block if the kernel is unresponsive.
         hci_close_dev(dd_);
         dd_ = -1; // Mark as closed
-        std::cout << "HCI device closed." << std::endl;
+        spdlog::get("BluetoothScanner")->info("HCI device closed.");
     }
 }
 
@@ -486,5 +480,7 @@ void BluetoothScanner::parse_advertising_data_general(uint8_t *data, int len, st
 void BluetoothScanner::registerHandler(std::unique_ptr<IDeviceHandler> handler) {
     if (handler) {
         device_handlers_.push_back(std::move(handler));
+    } else {
+        spdlog::get("BluetoothScanner")->warn("Attempted to register a null device handler.");
     }
 }

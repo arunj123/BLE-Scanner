@@ -15,6 +15,9 @@
 #include <map>      // For std::map to store latest samples per sensor
 #include <string>   // For map keys
 
+// spdlog include
+#include "spdlog/spdlog.h"
+
 /**
  * @brief Consumes SensorData from a MessageQueue, aggregates the latest samples
  * within a configured time window, and inserts the aggregated binary data into a database.
