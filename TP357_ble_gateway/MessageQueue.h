@@ -7,6 +7,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <optional> // C++17 for std::optional
+#include <chrono>   // For std::chrono::milliseconds
 
 /**
  * @brief A thread-safe message queue for SensorData objects.
@@ -26,6 +27,14 @@ public:
      * @return An optional containing the SensorData object if available, std::nullopt otherwise.
      */
     std::optional<SensorData> pop();
+
+    /**
+     * @brief Pops a SensorData object from the queue with a timeout.
+     * This method will block for up to the specified timeout duration or until data is available.
+     * @param timeout The maximum time to wait for data.
+     * @return An optional containing the SensorData object if available, std::nullopt if timeout occurs or queue is empty.
+     */
+    std::optional<SensorData> pop(std::chrono::milliseconds timeout);
 
     /**
      * @brief Checks if the queue is empty.

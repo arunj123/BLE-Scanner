@@ -23,7 +23,6 @@ std::optional<SensorData> MessageQueue::pop() {
     cv_.wait(lock, [this]{ return !queue_.empty(); });
 
     // After waking up, the lock is re-acquired.
-    // This check is mostly for robustness, as cv.wait should ensure !queue_.empty()
     if (queue_.empty()) {
         return std::nullopt;
     }
@@ -31,6 +30,25 @@ std::optional<SensorData> MessageQueue::pop() {
     SensorData data = queue_.front(); // Get data from the front
     queue_.pop();                     // Remove data from the front
     return data;                      // Return the data
+}
+
+/**
+ * @brief Pops a SensorData object from the queue with a timeout.
+ * This method will block for up to the specified timeout duration or until data is available.
+ * @param timeout The maximum time to wait for data.
+ * @return An optional containing the SensorData object if available, std::nullopt if timeout occurs or queue is empty.
+ */
+std::optional<SensorData> MessageQueue::pop(std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lock(mutex_); // Acquire unique lock
+    // Wait until the queue is not empty or timeout occurs.
+    bool data_available = cv_.wait_for(lock, timeout, [this]{ return !queue_.empty(); });
+
+    if (data_available && !queue_.empty()) {
+        SensorData data = queue_.front(); // Get data from the front
+        queue_.pop();                     // Remove data from the front
+        return data;                      // Return the data
+    }
+    return std::nullopt; // Timeout occurred or queue was empty
 }
 
 /**

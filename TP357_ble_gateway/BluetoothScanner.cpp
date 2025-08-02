@@ -36,11 +36,11 @@ void TP357Handler::parse_advertising_data_tp357(uint8_t *data, int len, std::str
 
         if (verbose_output) {
             // Print all AD types and their raw data for debugging/completeness
-            std::cout << "    AD Type: 0x" << std::hex << (int)field_type << std::dec << " (Len: " << (int)field_len << ") Raw Data: ";
-            for (int i = 0; i < field_data_len; ++i) {
-                printf("%02X ", field_data[i]);
-            }
-            std::cout << std::endl;
+            // std::cout << "    AD Type: 0x" << std::hex << (int)field_type << std::dec << " (Len: " << (int)field_len << ") Raw Data: ";
+            // for (int i = 0; i < field_data_len; ++i) {
+            //     printf("%02X ", field_data[i]);
+            // }
+            // std::cout << std::endl;
         }
 
         switch (field_type) {
@@ -48,23 +48,23 @@ void TP357Handler::parse_advertising_data_tp357(uint8_t *data, int len, std::str
             case AD_TYPE_SHORT_LOCAL_NAME: {
                 // Extract device name
                 device_name_out.assign((char*)field_data, field_data_len);
-                if (verbose_output) {
-                    std::cout << "      Decoded Device Name: \"" << device_name_out << "\"" << std::endl;
-                }
+                // if (verbose_output) {
+                //     std::cout << "      Decoded Device Name: \"" << device_name_out << "\"" << std::endl;
+                // }
                 break;
             }
             case AD_TYPE_MANUFACTURER_SPECIFIC_DATA: {
-                if (verbose_output) {
-                    std::cout << "      Decoded Manufacturer Specific Data: ";
-                }
+                // if (verbose_output) {
+                //     std::cout << "      Decoded Manufacturer Specific Data: ";
+                // }
                 // Check if enough data for Company ID (2 bytes), Temperature (2 bytes), and Humidity (1 byte)
                 // Based on ESP32 snippet, temperature is at index 1,2 (little-endian) and humidity at index 3.
                 // So, we need at least 4 bytes of manufacturer data (field_data[0] to field_data[3])
                 if (field_data_len >= 4) {
                     uint16_t company_id = field_data[0] | (field_data[1] << 8); // Little-endian Company ID
-                    if (verbose_output) {
-                        std::cout << "Company ID: 0x" << std::hex << company_id << std::dec << " ";
-                    }
+                    // if (verbose_output) {
+                    //     std::cout << "Company ID: 0x" << std::hex << company_id << std::dec << " ";
+                    // }
 
                     // Temperature: 16-bit little-endian from field_data[1] and field_data[2]
                     int16_t temp_raw = (field_data[1] | (field_data[2] << 8));
@@ -73,18 +73,18 @@ void TP357Handler::parse_advertising_data_tp357(uint8_t *data, int len, std::str
                     // Humidity: 8-bit from field_data[3]
                     humidity_out = static_cast<double>(field_data[3]); // Direct percentage
 
-                    if (verbose_output) {
-                        std::cout << "Temperature: " << temperature_out << " C, ";
-                        std::cout << "Humidity: " << humidity_out << " %";
-                    }
+                    // if (verbose_output) {
+                    //     std::cout << "Temperature: " << temperature_out << " C, ";
+                    //     std::cout << "Humidity: " << humidity_out << " %";
+                    // }
                 } else {
-                    if (verbose_output) {
-                        std::cout << "Not enough data for full decoding (expected at least 4 bytes, got " << field_data_len << ")";
-                    }
+                    // if (verbose_output) {
+                    //     std::cout << "Not enough data for full decoding (expected at least 4 bytes, got " << field_data_len << ")";
+                    // }
                 }
-                if (verbose_output) {
-                    std::cout << std::endl;
-                }
+                // if (verbose_output) {
+                //     std::cout << std::endl;
+                // }
                 break;
             }
             // Add more cases for other AD types if specific decoding is needed
@@ -99,23 +99,36 @@ void TP357Handler::handle(const std::string& addr, int8_t rssi, uint8_t *data, i
     double humidity = -999.0;
 
     // Parse specific data for TP357 and get the name (again, for verbose output)
-    TP357Handler::parse_advertising_data_tp357(data, len, decoded_device_name, temperature, humidity, true);
-
-    std::cout << "\n--- Detected TP357 Device ---" << std::endl;
-    std::cout << "Address: " << addr << std::endl;
+    TP357Handler::parse_advertising_data_tp357(data, len, decoded_device_name, temperature, humidity, false); // Set to false to reduce noise
 
     std::string predefined_name;
+    // Debugging: Print the received address and check map contents
+    std::cout << "\n--- Detected TP357 Device ---" << std::endl;
+    std::cout << "Received Address: \"" << addr << "\"" << std::endl;
+    std::cout << "Decoded Device Name from AD: \"" << decoded_device_name << "\"" << std::endl;
+
+
     // Check if a predefined name exists for this MAC address
     auto it = device_names_.find(addr);
     if (it != device_names_.end()) {
         predefined_name = it->second;
-        std::cout << "Predefined Name: " << predefined_name << std::endl;
+        std::cout << "Found Predefined Name: \"" << predefined_name << "\"" << std::endl;
     } else {
-        std::cout << "Decoded Device Name: \"" << decoded_device_name << "\"" << std::endl;
+        std::cout << "No Predefined Name found for this address. Available names in map:" << std::endl;
+        if (device_names_.empty()) {
+            std::cout << "  (Map is empty)" << std::endl;
+        } else {
+            for (const auto& pair : device_names_) {
+                std::cout << "  - Key: \"" << pair.first << "\", Value: \"" << pair.second << "\"" << std::endl;
+            }
+        }
+        // Fallback: If no predefined name, use the decoded device name
+        predefined_name = decoded_device_name;
+        std::cout << "Using Decoded Device Name as fallback: \"" << predefined_name << "\"" << std::endl;
     }
 
     std::cout << "RSSI: " << (int)rssi << std::endl;
-    // parse_advertising_data_tp357 already prints the detailed decoded fields.
+    std::cout << "Temperature: " << temperature << " C, Humidity: " << humidity << " %" << std::endl;
     std::cout << "-----------------------------" << std::endl;
 
     // Create SensorData object with current timestamp
@@ -131,6 +144,7 @@ void TP357Handler::handle(const std::string& addr, int8_t rssi, uint8_t *data, i
 
 void TP357Handler::setDeviceName(const std::string& mac_address, const std::string& name) {
     device_names_[mac_address] = name;
+    std::cout << "Registered device: \"" << mac_address << "\" as \"" << name << "\"" << std::endl;
 }
 
 void TP357Handler::setMessageQueue(MessageQueue* queue) {
