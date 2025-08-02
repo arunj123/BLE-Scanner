@@ -5,7 +5,9 @@
 #include <exception> // For std::exception
 #include <iomanip> // For std::put_time
 #include <sstream> // For std::stringstream
-#include <cstdint> // For uint64_t (though not directly used for thread ID now)
+#include <cstdint> // For uint64_t, uint8_t
+#include <cstdio>  // For sscanf
+#include <array>   // For std::array
 
 // spdlog include
 #include "spdlog/spdlog.h"
@@ -181,9 +183,8 @@ void DataProcessor::processingLoop() {
 std::vector<char> DataProcessor::serializeSensorDataMap(const std::map<std::string, SensorData>& data_map) {
     std::vector<char> buffer;
     // Reserve some space to reduce reallocations (estimation)
-    // Roughly: 1 byte for count + N * (1 byte MAC len + 18 bytes MAC + 1 byte PNAME len + 30 bytes PNAME + 1 byte DNAME len + 30 bytes DNAME + 8 bytes temp + 8 bytes hum + 1 byte RSSI)
-    // Using average string lengths for estimation
-    buffer.reserve(1 + data_map.size() * (1 + 18 + 1 + 20 + 1 + 20 + sizeof(double) + sizeof(double) + 1));
+    // Roughly: 1 byte for count + N * (6 bytes MAC + 8 bytes temp + 8 bytes hum + 1 byte RSSI)
+    buffer.reserve(1 + data_map.size() * (6 + sizeof(double) + sizeof(double) + 1));
 
     // Write total number of sensors in this aggregation (1 byte)
     uint8_t num_sensors = static_cast<uint8_t>(data_map.size());
@@ -193,42 +194,39 @@ std::vector<char> DataProcessor::serializeSensorDataMap(const std::map<std::stri
     for (const auto& pair : data_map) {
         const SensorData& data = pair.second;
 
-        // MAC Address
-        uint8_t mac_len = static_cast<uint8_t>(data.mac_address.length());
-        buffer.push_back(mac_len);
-        for (char c : data.mac_address) buffer.push_back(c);
-        spdlog::get("DataProcessor")->debug("  - Serialized MAC: {}", data.mac_address);
+        // MAC Address (fixed 6 bytes)
+        std::array<uint8_t, 6> mac_bytes;
+        // Parse MAC string "AA:BB:CC:DD:EE:FF" into 6 bytes
+        if (std::sscanf(data.mac_address.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                        &mac_bytes[0], &mac_bytes[1], &mac_bytes[2],
+                        &mac_bytes[3], &mac_bytes[4], &mac_bytes[5]) == 6) {
+            for (size_t i = 0; i < 6; ++i) {
+                buffer.push_back(static_cast<char>(mac_bytes[i]));
+            }
+            spdlog::get("DataProcessor")->debug("  - Serialized MAC: {}", data.mac_address);
+        } else {
+            spdlog::get("DataProcessor")->error("Failed to parse MAC address for serialization: {}", data.mac_address);
+            // Push 6 zero bytes as fallback for malformed MAC
+            for (size_t i = 0; i < 6; ++i) {
+                buffer.push_back(0);
+            }
+        }
 
-        // Predefined Name
-        uint8_t predefined_name_len = static_cast<uint8_t>(data.predefined_name.length());
-        buffer.push_back(predefined_name_len);
-        for (char c : data.predefined_name) buffer.push_back(c);
-        spdlog::get("DataProcessor")->debug("  - Serialized Predefined Name: {}", data.predefined_name);
-
-
-        // Decoded Device Name
-        uint8_t decoded_device_name_len = static_cast<uint8_t>(data.decoded_device_name.length());
-        buffer.push_back(decoded_device_name_len);
-        for (char c : data.decoded_device_name) buffer.push_back(c);
-        spdlog::get("DataProcessor")->debug("  - Serialized Decoded Name: {}", data.decoded_device_name);
-
+        // Predefined Name and Decoded Device Name are no longer serialized.
 
         // Temperature (double)
         const char* temp_bytes = reinterpret_cast<const char*>(&data.temperature);
         for (size_t i = 0; i < sizeof(double); ++i) buffer.push_back(temp_bytes[i]);
         spdlog::get("DataProcessor")->debug("  - Serialized Temperature: {}", data.temperature);
 
-
         // Humidity (double)
         const char* hum_bytes = reinterpret_cast<const char*>(&data.humidity);
         for (size_t i = 0; i < sizeof(double); ++i) buffer.push_back(hum_bytes[i]);
         spdlog::get("DataProcessor")->debug("  - Serialized Humidity: {}", data.humidity);
 
-
         // RSSI (int8_t)
         buffer.push_back(static_cast<char>(data.rssi));
         spdlog::get("DataProcessor")->debug("  - Serialized RSSI: {}", (int)data.rssi);
-
     }
     spdlog::get("DataProcessor")->debug("Serialization complete. Blob size: {} bytes.", buffer.size());
     return buffer;
